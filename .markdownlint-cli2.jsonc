@@ -1,0 +1,12 @@
+{
+  // This repo's markdown wraps prose at ~90 chars, not markdownlint's 80-char
+  // default. Match actual practice instead of reflowing every doc.
+  "config": {
+    "default": true,
+    "MD013": {
+      "line_length": 100,
+      "code_blocks": false,
+      "tables": false
+    }
+  }
+}

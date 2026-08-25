@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the version $cargo_version in Cargo.toml." >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: if a tag's release job is re-run after a partial
+          # failure, a crate already published at this version is treated
+          # as success instead of failing the whole release.
+          log="$(mktemp)"
+          if cargo publish -p lyrics-sidecar --locked 2>&1 | tee "$log"; then
+            :
+          elif grep -q "already uploaded" "$log"; then
+            echo "lyrics-sidecar already published at this version, skipping."
+          else
+            exit 1
+          fi
+
+      - name: Add macOS targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build universal binary
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/lyrics \
+            target/aarch64-apple-darwin/release/lyrics \
+            target/x86_64-apple-darwin/release/lyrics
+          chmod +x dist/lyrics
+          tar -czf "dist/lyrics-$GITHUB_REF_NAME-macos-universal.tar.gz" -C dist lyrics
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'NOTES'
+          ## Install
+
+          ```bash
+          cargo install lyrics-sidecar --locked
+          ```
+
+          Or download the prebuilt universal macOS binary below.
+
+          Requires Rust 1.89+ (if building from source).
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            --title "lyrics $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file /tmp/release-notes.md \
+            "dist/lyrics-$GITHUB_REF_NAME-macos-universal.tar.gz"
