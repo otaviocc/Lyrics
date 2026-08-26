@@ -289,11 +289,24 @@ pub fn lookup_lyrics(
 
 /// Display `text` in a terminal pager ($PAGER, or `less`).
 ///
+/// When `color` is `true`, LRC timestamps like `[00:17.12]` are rendered in dark gray so the
+/// lyrics text stands out. Respects the `NO_COLOR` environment variable.
+///
 /// # Errors
 ///
 /// Returns an error if the pager cannot be spawned or exits with a non-zero status, or if
 /// writing to the pager's stdin fails.
-pub fn print_lyrics(text: &str) -> Result<()> {
+pub fn print_lyrics(text: &str, color: bool) -> Result<()> {
+    let use_color = color && std::env::var_os("NO_COLOR").is_none();
+
+    let output;
+    let rendered = if use_color {
+        output = colorize_timestamps(text);
+        output.as_str()
+    } else {
+        text
+    };
+
     let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_owned());
     let mut child = Command::new(&pager)
         .env("LESS", "FRX")
@@ -302,7 +315,7 @@ pub fn print_lyrics(text: &str) -> Result<()> {
         .with_context(|| format!("failed to start pager `{pager}`"))?;
 
     if let Some(ref mut stdin) = child.stdin {
-        stdin.write_all(text.as_bytes())?;
+        stdin.write_all(rendered.as_bytes())?;
     }
 
     let status = child.wait()?;
@@ -310,4 +323,32 @@ pub fn print_lyrics(text: &str) -> Result<()> {
         anyhow::bail!("pager `{pager}` exited with {status}");
     }
     Ok(())
+}
+
+/// Wrap LRC timestamps (`[MM:SS.xx]`) in a dark-gray ANSI color.
+#[allow(clippy::string_slice)] // All slices are derived from `find(']')` and `trim_start`, valid boundaries.
+fn colorize_timestamps(text: &str) -> String {
+    const GRAY: &str = "\x1b[38;5;240m";
+    const RESET: &str = "\x1b[0m";
+
+    let mut out = String::with_capacity(text.len().saturating_add(text.len() / 4));
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[')
+            && let Some(close) = trimmed.find(']')
+        {
+            let prefix_len = line.len().saturating_sub(trimmed.len());
+            // Prefix (leading whitespace) + dimmed timestamp + reset + rest of line
+            out.push_str(&line[..prefix_len]);
+            out.push_str(GRAY);
+            out.push_str(&trimmed[..=close]);
+            out.push_str(RESET);
+            out.push_str(&trimmed[close.saturating_add(1)..]);
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }

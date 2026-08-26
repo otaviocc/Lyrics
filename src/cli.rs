@@ -99,6 +99,10 @@ pub struct SharedOptions {
     #[arg(short, long, conflicts_with = "verbose")]
     pub quiet: bool,
 
+    /// Disable colored output in `show` (timestamps are dimmed by default).
+    #[arg(long)]
+    pub no_color: bool,
+
     // --- Network -----------------------------------------------------------
     /// Lyrics provider to query.
     #[arg(long, value_enum, default_value_t = ProviderKind::Lrclib)]

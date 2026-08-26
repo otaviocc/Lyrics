@@ -82,7 +82,7 @@ fn run(cli: Cli) -> Result<bool> {
                         .as_deref()
                         .or(rec.plain_lyrics.as_deref())
                         .unwrap_or("");
-                    runner::print_lyrics(text)?;
+                    runner::print_lyrics(text, !options.no_color)?;
                 }
                 None => {
                     eprintln!("No lyrics found for \"{track}\" by {artist}");
