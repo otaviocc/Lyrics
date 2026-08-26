@@ -13,9 +13,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Written as a `.lrc` (not `.txt`) with a real timestamp, so `sidecar_state()` reads it back
-/// as `Synced`, so an instrumental track is then skipped on future runs exactly like a
-/// genuinely synced one, instead of costing a request every time.
+/// Instrumental marker written as a `.lrc` with a real timestamp.
+///
+/// `sidecar_state()` reads it back as `Synced`, so an instrumental track is then skipped on
+/// future runs exactly like a genuinely synced one, instead of costing a request every time.
 pub const INSTRUMENTAL_MARKER: &str = "[00:00.00]Instrumental\n";
 
 /// On-disk state of a track's sidecar lyrics file.
@@ -30,6 +31,7 @@ pub enum SidecarState {
 ///
 /// Debug-asserts that the result is never equal to the input. This is the structural
 /// enforcement of the "never touch the audio file" invariant.
+#[must_use]
 pub fn sidecar_path(audio_path: &Path, extension: &str) -> PathBuf {
     let path = audio_path.with_extension(extension);
     debug_assert_ne!(
@@ -52,6 +54,7 @@ fn txt_path(audio_path: &Path) -> PathBuf {
 /// Does `line` look like an LRC timestamp tag, e.g. `[00:17.12]`?
 /// Metadata tags such as `[ar:Artist Name]` are deliberately excluded: after the leading digit
 /// run there must be a colon then more digits, not an arbitrary letter.
+#[allow(clippy::string_slice)] // `close` from `find(']')` is always at a char boundary.
 fn is_timestamp_line(line: &str) -> bool {
     let line = line.trim_start();
     let Some(rest) = line.strip_prefix('[') else {
@@ -114,6 +117,10 @@ fn normalize(mut contents: String) -> String {
 
 /// Write a synced `.lrc` sidecar. Unless `keep_plain`, removes a stale `.txt` sidecar, but
 /// only after the `.lrc` write has succeeded, so a failed write never loses the plain copy.
+///
+/// # Errors
+///
+/// Returns an error on I/O failure during the atomic write or stale-`.txt` removal.
 pub fn write_synced(audio_path: &Path, lyrics: &str, keep_plain: bool) -> io::Result<()> {
     write_atomic(&lrc_path(audio_path), &normalize(lyrics.to_string()))?;
     if !keep_plain {
@@ -127,12 +134,20 @@ pub fn write_synced(audio_path: &Path, lyrics: &str, keep_plain: bool) -> io::Re
 }
 
 /// Write a plain-text `.txt` sidecar (no timestamps).
+///
+/// # Errors
+///
+/// Returns an error on I/O failure during the atomic write.
 pub fn write_plain(audio_path: &Path, lyrics: &str) -> io::Result<()> {
     write_atomic(&txt_path(audio_path), &normalize(lyrics.to_string()))
 }
 
 /// Write the instrumental marker as a `.lrc`, but only when no sidecar exists yet. Never
 /// clobbers a real lyrics file (plain or synced) with the marker.
+///
+/// # Errors
+///
+/// Returns an error on I/O failure during the atomic write.
 pub fn write_instrumental_marker_if_absent(audio_path: &Path) -> io::Result<bool> {
     if sidecar_state(audio_path) != SidecarState::None {
         return Ok(false);

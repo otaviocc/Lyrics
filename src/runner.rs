@@ -7,7 +7,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::{Result, Context as _};
+use anyhow::{Context as _, Result};
 use walkdir::WalkDir;
 
 use crate::cli::SharedOptions;
@@ -39,16 +39,17 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            Outcome::Fetched => "fetched",
-            Outcome::Upgraded => "upgraded",
-            Outcome::Plain => "plain",
-            Outcome::Instrumental => "instrumental",
-            Outcome::Skipped => "skipped",
-            Outcome::Missing => "missing",
-            Outcome::Untagged => "untagged",
-            Outcome::NoChange => "no-change",
+            Self::Fetched => "fetched",
+            Self::Upgraded => "upgraded",
+            Self::Plain => "plain",
+            Self::Instrumental => "instrumental",
+            Self::Skipped => "skipped",
+            Self::Missing => "missing",
+            Self::Untagged => "untagged",
+            Self::NoChange => "no-change",
         }
     }
 }
@@ -68,20 +69,21 @@ pub struct Summary {
 
 impl Summary {
     /// Bump the counter for the given outcome.
-    fn record(&mut self, outcome: Outcome) {
+    const fn record(&mut self, outcome: Outcome) {
         match outcome {
-            Outcome::Fetched => self.synced += 1,
-            Outcome::Upgraded => self.upgraded += 1,
-            Outcome::Plain => self.plain += 1,
-            Outcome::Instrumental => self.instrumental += 1,
-            Outcome::Skipped => self.skipped += 1,
-            Outcome::Missing => self.missing += 1,
-            Outcome::Untagged => self.untagged += 1,
+            Outcome::Fetched => self.synced = self.synced.saturating_add(1),
+            Outcome::Upgraded => self.upgraded = self.upgraded.saturating_add(1),
+            Outcome::Plain => self.plain = self.plain.saturating_add(1),
+            Outcome::Instrumental => self.instrumental = self.instrumental.saturating_add(1),
+            Outcome::Skipped => self.skipped = self.skipped.saturating_add(1),
+            Outcome::Missing => self.missing = self.missing.saturating_add(1),
+            Outcome::Untagged => self.untagged = self.untagged.saturating_add(1),
             Outcome::NoChange => {}
         }
     }
 
     /// Format the summary as a single human-readable line.
+    #[must_use]
     pub fn line(&self) -> String {
         format!(
             "synced: {}  upgraded: {}  plain: {}  instrumental: {}  skipped: {}  missing: {}  untagged: {}  errors: {}",
@@ -127,6 +129,10 @@ fn lookup(
 }
 
 /// Process a single audio file. Returns the outcome; logs per-track detail per `opts`.
+///
+/// # Errors
+///
+/// Propagates I/O errors from sidecar writes and network errors from the lyrics provider.
 pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> Result<Outcome> {
     let resolved = meta::resolve(path, opts.path_fallback);
     let meta = match resolved {
@@ -228,12 +234,17 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> 
 
 /// Walk `dir` recursively, processing every recognized audio file in deterministic
 /// (name-sorted) order, strictly sequentially.
+///
+/// # Errors
+///
+/// Propagates the first network or I/O error that cannot be recovered from; per-track errors
+/// are caught and counted in the returned [`Summary`].
 pub fn scan(client: &mut Client, dir: &Path, opts: &SharedOptions) -> Result<Summary> {
     let mut summary = Summary::default();
 
     let mut entries: Vec<_> = WalkDir::new(dir)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file() && meta::is_audio_file(e.path()))
         .collect();
     entries.sort_by(|a, b| a.path().cmp(b.path()));
@@ -242,7 +253,7 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &SharedOptions) -> Result<Sum
         match process_track(client, entry.path(), opts) {
             Ok(outcome) => summary.record(outcome),
             Err(err) => {
-                summary.errors += 1;
+                summary.errors = summary.errors.saturating_add(1);
                 eprintln!("error     {}: {err:#}", entry.path().display());
             }
         }
@@ -254,6 +265,10 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &SharedOptions) -> Result<Sum
 /// Look up lyrics by artist/track name without an audio file.
 ///
 /// Constructs a synthetic [`TrackMeta`] and delegates to the standard lookup pipeline.
+///
+/// # Errors
+///
+/// Propagates network errors from the lyrics provider.
 pub fn lookup_lyrics(
     client: &mut Client,
     track: &str,
@@ -273,6 +288,11 @@ pub fn lookup_lyrics(
 }
 
 /// Display `text` in a terminal pager ($PAGER, or `less`).
+///
+/// # Errors
+///
+/// Returns an error if the pager cannot be spawned or exits with a non-zero status, or if
+/// writing to the pager's stdin fails.
 pub fn print_lyrics(text: &str) -> Result<()> {
     let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_owned());
     let mut child = Command::new(&pager)

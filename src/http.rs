@@ -5,10 +5,11 @@
 //!
 //! Implements the politeness contract both known providers document: identify the client via
 //! User-Agent, throttle requests, and honor `Retry-After` on 429. LRCLIB at
-//! https://lrclib.net/docs, lrcmux at https://lrcmux.dev/docs (60 req/min, `Retry-After` on
+//! <https://lrclib.net/docs>, lrcmux at <https://lrcmux.dev/docs> (60 req/min, `Retry-After` on
 //! 429, `User-Agent` recommended). Uses blocking `ureq` deliberately, since both contracts
 //! require sequential requests, so async buys nothing.
 
+use std::fmt::Write as _;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -76,6 +77,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new client from the given configuration.
+    #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(10)))
@@ -101,8 +103,8 @@ impl Client {
     fn throttle(&mut self) {
         if let Some(last) = self.last_request {
             let elapsed = last.elapsed();
-            if elapsed < self.delay {
-                thread::sleep(self.delay - elapsed);
+            if let Some(remaining) = self.delay.checked_sub(elapsed) {
+                thread::sleep(remaining);
             }
         }
         self.last_request = Some(Instant::now());
@@ -135,7 +137,7 @@ impl Client {
             let mut response = match result {
                 Ok(response) => response,
                 Err(err) => {
-                    attempt += 1;
+                    attempt = attempt.saturating_add(1);
                     if attempt > self.max_retries {
                         return Err(err).with_context(|| {
                             format!("{} request failed (transport error)", self.spec.name)
@@ -159,7 +161,7 @@ impl Client {
                 return Ok(Some(body));
             }
 
-            attempt += 1;
+            attempt = attempt.saturating_add(1);
             if status == 429 {
                 let wait = retry_after(response.headers())
                     .unwrap_or_else(|| Duration::from_secs(2u64.saturating_pow(attempt)));
@@ -194,8 +196,7 @@ impl Client {
             let message = response
                 .body_mut()
                 .read_json::<ErrorBody>()
-                .map(|b| describe_error(&b))
-                .unwrap_or_else(|_| format!("HTTP {status}"));
+                .map_or_else(|_| format!("HTTP {status}"), |b| describe_error(&b));
             bail!("{} request failed: {message}", self.spec.name);
         }
     }
@@ -203,6 +204,11 @@ impl Client {
     /// Look up a track by title, artist, and (optionally) album and duration.
     ///
     /// Returns `Ok(None)` when the provider has no matching record (HTTP 404).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure, non-retryable HTTP errors, or when the provider's
+    /// rate limit or server-error budget is exhausted.
     pub fn get(&mut self, meta: &TrackMeta) -> Result<Option<LyricsRecord>> {
         let mut url = format!(
             "{}?track_name={}&artist_name={}",
@@ -211,10 +217,10 @@ impl Client {
             urlencode(&meta.artist),
         );
         if let Some(album) = &meta.album {
-            url.push_str(&format!("&album_name={}", urlencode(album)));
+            let _ = write!(url, "&album_name={}", urlencode(album));
         }
         if let Some(duration) = meta.duration {
-            url.push_str(&format!("&duration={duration}"));
+            let _ = write!(url, "&duration={duration}");
         }
         self.get_json(&url)
     }
@@ -226,6 +232,11 @@ impl Client {
     /// remaster, reissue, or regional release). `pick_best_candidate` already scores album
     /// match as a client-side tiebreaker, which gets the same benefit without the false
     /// negatives.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on network failure, non-retryable HTTP errors, or when the provider's
+    /// rate limit or server-error budget is exhausted.
     pub fn search(&mut self, meta: &TrackMeta) -> Result<Vec<LyricsRecord>> {
         let url = format!(
             "{}?track_name={}&artist_name={}",
@@ -258,10 +269,12 @@ fn urlencode(s: &str) -> String {
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
+                out.push(char::from(b));
             }
             b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
         }
     }
     out
@@ -271,6 +284,13 @@ fn urlencode(s: &str) -> String {
 ///
 /// Rejects anything outside `tolerance` seconds of the local duration (when known), then
 /// prefers synced-available, then closest duration, then a matching album name.
+///
+/// # Panics
+///
+/// Panics if `duration_delta` returns `NaN` for a candidate, which cannot happen because all
+/// inputs are finite `f64` values derived from `u32` subtractions.
+#[must_use]
+#[allow(clippy::unwrap_used)] // Documented in `# Panics` above.
 pub fn pick_best_candidate(
     candidates: &[LyricsRecord],
     local_duration: Option<u32>,
@@ -280,7 +300,9 @@ pub fn pick_best_candidate(
     let mut survivors: Vec<&LyricsRecord> = candidates
         .iter()
         .filter(|c| match (local_duration, c.duration) {
-            (Some(local), Some(remote)) => (local as f64 - remote).abs() <= tolerance as f64,
+            (Some(local), Some(remote)) => {
+                (f64::from(local) - remote).abs() <= f64::from(tolerance)
+            }
             _ => true,
         })
         .collect();
@@ -288,7 +310,7 @@ pub fn pick_best_candidate(
     survivors.sort_by(|a, b| {
         let synced_key = |c: &&LyricsRecord| c.synced_lyrics.is_none();
         let duration_delta = |c: &&LyricsRecord| match (local_duration, c.duration) {
-            (Some(local), Some(remote)) => (local as f64 - remote).abs(),
+            (Some(local), Some(remote)) => (f64::from(local) - remote).abs(),
             _ => f64::MAX,
         };
         let album_key = |c: &&LyricsRecord| match (local_album, &c.album_name) {
@@ -319,7 +341,7 @@ mod tests {
             id: 1,
             track_name: "T".into(),
             artist_name: "A".into(),
-            album_name: album.map(|s| s.to_string()),
+            album_name: album.map(std::string::ToString::to_string),
             duration,
             instrumental: false,
             plain_lyrics: Some("plain".into()),

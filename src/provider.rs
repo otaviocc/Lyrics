@@ -39,15 +39,16 @@ pub struct ProviderSpec {
 
 impl ProviderKind {
     /// Return the endpoints and configuration for this provider.
-    pub fn spec(self) -> ProviderSpec {
+    #[must_use]
+    pub const fn spec(self) -> ProviderSpec {
         match self {
-            ProviderKind::Lrclib => ProviderSpec {
+            Self::Lrclib => ProviderSpec {
                 name: "lrclib",
                 get_url: "https://lrclib.net/api/get",
                 search_url: "https://lrclib.net/api/search",
                 client_header: Some("Lrclib-Client"),
             },
-            ProviderKind::Lrcmux => ProviderSpec {
+            Self::Lrcmux => ProviderSpec {
                 name: "lrcmux",
                 get_url: "https://api.lrcmux.dev/compat/lrclib/api/get",
                 search_url: "https://api.lrcmux.dev/compat/lrclib/api/search",

@@ -55,13 +55,14 @@ fn run(cli: Cli) -> Result<bool> {
             if !options.quiet {
                 println!("{}", summary.line());
             }
-            let total_processed = summary.synced
-                + summary.upgraded
-                + summary.plain
-                + summary.instrumental
-                + summary.skipped
-                + summary.missing
-                + summary.untagged;
+            let total_processed = summary
+                .synced
+                .saturating_add(summary.upgraded)
+                .saturating_add(summary.plain)
+                .saturating_add(summary.instrumental)
+                .saturating_add(summary.skipped)
+                .saturating_add(summary.missing)
+                .saturating_add(summary.untagged);
             let all_failed = summary.errors > 0 && total_processed == 0;
             Ok(!all_failed)
         }
