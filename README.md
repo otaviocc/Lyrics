@@ -35,10 +35,10 @@ Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 ## Quick start
 
 ```sh
-lyrics scan ~/Music              # your whole library
-lyrics scan "~/Music/Radiohead"  # just one artist or album
+lyrics scan ~/Music                                           # your whole library
+lyrics scan "~/Music/Radiohead"                               # just one artist or album
 lyrics track "~/Music/Radiohead/OK Computer/01 Airbag.flac"   # a single file
-lyrics show "Airbag" --artist "Radiohead"                      # no audio file needed
+lyrics show "Airbag" --artist "Radiohead"                     # no audio file needed
 ```
 
 `show` looks up lyrics by artist and track name (no audio file required) and displays them in a
