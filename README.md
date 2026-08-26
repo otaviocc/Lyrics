@@ -10,14 +10,27 @@ to them.
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install otaviocc/tap/lyrics
+```
+
+### Cargo
+
+```sh
+cargo install lyrics-sidecar
+```
+
+### From source
+
 ```sh
 git clone https://github.com/otaviocc/Lyrics.git
 cd Lyrics
 make install
 ```
 
-This puts a `lyrics` binary on your `PATH` (`~/.cargo/bin`). Requires
-[Rust](https://rustup.rs) to build. `make uninstall` removes it again.
+Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 
 ## Quick start
 
