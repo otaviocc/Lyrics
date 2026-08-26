@@ -65,5 +65,29 @@ fn run(cli: Cli) -> Result<bool> {
             let all_failed = summary.errors > 0 && total_processed == 0;
             Ok(!all_failed)
         }
+        Command::Show {
+            track,
+            artist,
+            album,
+            options,
+        } => {
+            let mut client = client_for(&options);
+            let record =
+                runner::lookup_lyrics(&mut client, &track, &artist, album.as_deref(), &options)?;
+            match record {
+                Some(rec) => {
+                    let text = rec
+                        .synced_lyrics
+                        .as_deref()
+                        .or(rec.plain_lyrics.as_deref())
+                        .unwrap_or("");
+                    runner::print_lyrics(text)?;
+                }
+                None => {
+                    eprintln!("No lyrics found for \"{track}\" by {artist}");
+                }
+            }
+            Ok(true)
+        }
     }
 }

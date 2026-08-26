@@ -3,9 +3,11 @@
 
 //! Per-track orchestration: decide what to do, do it, report it. Also the `scan` walk.
 
-use std::path::Path;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
-use anyhow::Result;
+use anyhow::{Result, Context as _};
 use walkdir::WalkDir;
 
 use crate::cli::SharedOptions;
@@ -247,4 +249,45 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &SharedOptions) -> Result<Sum
     }
 
     Ok(summary)
+}
+
+/// Look up lyrics by artist/track name without an audio file.
+///
+/// Constructs a synthetic [`TrackMeta`] and delegates to the standard lookup pipeline.
+pub fn lookup_lyrics(
+    client: &mut Client,
+    track: &str,
+    artist: &str,
+    album: Option<&str>,
+    opts: &SharedOptions,
+) -> Result<Option<LyricsRecord>> {
+    let meta = TrackMeta {
+        path: PathBuf::from("<show>"),
+        title: track.to_owned(),
+        artist: artist.to_owned(),
+        album: album.map(str::to_owned),
+        duration: None,
+        guessed: vec![],
+    };
+    lookup(client, &meta, opts)
+}
+
+/// Display `text` in a terminal pager ($PAGER, or `less`).
+pub fn print_lyrics(text: &str) -> Result<()> {
+    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_owned());
+    let mut child = Command::new(&pager)
+        .env("LESS", "FRX")
+        .stdin(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to start pager `{pager}`"))?;
+
+    if let Some(ref mut stdin) = child.stdin {
+        stdin.write_all(text.as_bytes())?;
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("pager `{pager}` exited with {status}");
+    }
+    Ok(())
 }

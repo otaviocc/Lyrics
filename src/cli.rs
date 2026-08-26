@@ -37,9 +37,25 @@ pub enum Command {
         #[command(flatten)]
         options: SharedOptions,
     },
+    /// Look up lyrics by artist/track name and display them in a pager.
+    Show {
+        /// Track name to look up.
+        track: String,
+
+        /// Artist name.
+        #[arg(long)]
+        artist: String,
+
+        /// Album name (optional, refines the search).
+        #[arg(long)]
+        album: Option<String>,
+
+        #[command(flatten)]
+        options: SharedOptions,
+    },
 }
 
-/// Options shared by both the `track` and `scan` subcommands.
+/// Options shared by the `track`, `scan`, and `show` subcommands.
 #[derive(Args, Debug, Clone)]
 pub struct SharedOptions {
     // --- Selection -----------------------------------------------------
