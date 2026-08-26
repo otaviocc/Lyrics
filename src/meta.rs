@@ -19,11 +19,11 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 
 /// Returns `true` if `path` has an extension matching a known audio format (case-insensitive).
+#[must_use]
 pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| AUDIO_EXTENSIONS.iter().any(|a| a.eq_ignore_ascii_case(e)))
-        .unwrap_or(false)
+        .is_some_and(|e| AUDIO_EXTENSIONS.iter().any(|a| a.eq_ignore_ascii_case(e)))
 }
 
 /// Resolved metadata for a single audio file, ready for a lyrics lookup.
@@ -57,11 +57,12 @@ pub enum GuessedField {
 
 impl GuessedField {
     /// Human-readable name of the field, used in log output.
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            GuessedField::Title => "title",
-            GuessedField::Artist => "artist",
-            GuessedField::Album => "album",
+            Self::Title => "title",
+            Self::Artist => "artist",
+            Self::Album => "album",
         }
     }
 }
@@ -83,29 +84,27 @@ fn non_empty(s: Option<String>) -> Option<String> {
 ///
 /// Returns all-`None` fields when the file is unreadable or carries no recognized tags.
 fn read_raw_tags(path: &Path) -> RawTags {
-    let tagged = match lofty::read_from_path(path) {
-        Ok(t) => t,
-        Err(_) => {
-            return RawTags {
-                title: None,
-                artist: None,
-                album: None,
-                duration: None,
-            };
-        }
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return RawTags {
+            title: None,
+            artist: None,
+            album: None,
+            duration: None,
+        };
     };
 
-    let duration = Some(tagged.properties().duration().as_secs() as u32).filter(|&d| d > 0);
+    let duration = u32::try_from(tagged.properties().duration().as_secs())
+        .ok()
+        .filter(|&d| d > 0);
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-    let (title, artist, album) = match tag {
-        Some(tag) => (
+    let (title, artist, album) = tag.map_or((None, None, None), |tag| {
+        (
             non_empty(tag.title().map(|s| s.to_string())),
             non_empty(tag.artist().map(|s| s.to_string())),
             non_empty(tag.album().map(|s| s.to_string())),
-        ),
-        None => (None, None, None),
-    };
+        )
+    });
 
     RawTags {
         title,
@@ -119,6 +118,8 @@ fn read_raw_tags(path: &Path) -> RawTags {
 ///
 /// Digits without a following separator are not stripped (e.g. "2001 A Space Odyssey" yields
 /// "A Space Odyssey" but "21" stays "21").
+#[allow(clippy::string_slice)] // Offsets are computed from `char_indices()`, always at boundaries.
+#[allow(clippy::arithmetic_side_effects)] // Index arithmetic on known-valid char boundaries.
 fn strip_track_number(stem: &str) -> &str {
     let mut chars = stem.char_indices().peekable();
     let mut digit_end = 0;
@@ -158,6 +159,7 @@ fn strip_track_number(stem: &str) -> &str {
 ///
 /// Returns `None` when nothing was stripped, so callers only retry when the title actually
 /// changed.
+#[must_use]
 pub fn strip_trailing_markers(title: &str) -> Option<String> {
     let mut current = title.trim_end();
     let mut changed = false;
@@ -175,6 +177,7 @@ pub fn strip_trailing_markers(title: &str) -> Option<String> {
 }
 
 /// Strip exactly one trailing `(...)` or `[...]` group from `s`, if `s` ends with one.
+#[allow(clippy::string_slice)] // `open_idx` comes from `char_indices()`, always at a boundary.
 fn strip_one_trailing_group(s: &str) -> Option<&str> {
     let (close, open) = match s.chars().next_back()? {
         ')' => (')', '('),
@@ -186,9 +189,9 @@ fn strip_one_trailing_group(s: &str) -> Option<&str> {
     let mut open_idx = None;
     for (i, c) in s.char_indices().rev() {
         if c == close {
-            depth += 1;
+            depth = depth.saturating_add(1);
         } else if c == open {
-            depth -= 1;
+            depth = depth.saturating_sub(1);
             if depth == 0 {
                 open_idx = Some(i);
                 break;
@@ -215,14 +218,14 @@ fn guess_from_path(path: &Path) -> PathGuess {
         .file_stem()
         .and_then(|s| s.to_str())
         .map(strip_track_number)
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .filter(|s| !s.is_empty());
 
     let album = path
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .filter(|s| !s.is_empty());
 
     let artist = path
@@ -230,7 +233,7 @@ fn guess_from_path(path: &Path) -> PathGuess {
         .and_then(|p| p.parent())
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .filter(|s| !s.is_empty());
 
     PathGuess {
@@ -252,6 +255,7 @@ pub enum ResolvedMeta {
 /// guessing when `path_fallback` is enabled.
 ///
 /// Returns `Untagged` when title or artist could not be determined from either source.
+#[must_use]
 pub fn resolve(path: &Path, path_fallback: bool) -> ResolvedMeta {
     let raw = read_raw_tags(path);
     let mut guessed = Vec::new();

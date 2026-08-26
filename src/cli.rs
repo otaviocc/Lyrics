@@ -57,6 +57,7 @@ pub enum Command {
 
 /// Options shared by the `track`, `scan`, and `show` subcommands.
 #[derive(Args, Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct SharedOptions {
     // --- Selection -----------------------------------------------------
     /// Re-fetch and overwrite even tracks that already have a synced .lrc.

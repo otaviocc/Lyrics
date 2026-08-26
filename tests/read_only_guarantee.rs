@@ -17,6 +17,7 @@ use std::time::SystemTime;
 
 use lyrics::meta;
 
+#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
 fn fixture_copy(tmp: &Path) -> std::path::PathBuf {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.flac");
     let dst = tmp.join("01 Test Track.flac");
@@ -24,6 +25,7 @@ fn fixture_copy(tmp: &Path) -> std::path::PathBuf {
     dst
 }
 
+#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
 #[test]
 fn reading_tags_never_modifies_the_audio_file() {
     let tmp = tempfile::tempdir().unwrap();
@@ -54,6 +56,7 @@ fn reading_tags_never_modifies_the_audio_file() {
     assert!(before_mtime <= SystemTime::now());
 }
 
+#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
 #[test]
 fn resolved_metadata_matches_embedded_tags() {
     let tmp = tempfile::tempdir().unwrap();
