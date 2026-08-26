@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 /// genuinely synced one, instead of costing a request every time.
 pub const INSTRUMENTAL_MARKER: &str = "[00:00.00]Instrumental\n";
 
+/// On-disk state of a track's sidecar lyrics file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarState {
     Synced,
@@ -38,10 +39,12 @@ pub fn sidecar_path(audio_path: &Path, extension: &str) -> PathBuf {
     path
 }
 
+/// Sidecar path with the `.lrc` extension.
 fn lrc_path(audio_path: &Path) -> PathBuf {
     sidecar_path(audio_path, "lrc")
 }
 
+/// Sidecar path with the `.txt` extension.
 fn txt_path(audio_path: &Path) -> PathBuf {
     sidecar_path(audio_path, "txt")
 }
@@ -70,6 +73,7 @@ fn is_timestamp_line(line: &str) -> bool {
             .all(|c| c.is_ascii_digit())
 }
 
+/// Detect whether an audio file has a synced `.lrc`, a plain `.txt`, or no sidecar at all.
 pub fn sidecar_state(audio_path: &Path) -> SidecarState {
     let lrc = lrc_path(audio_path);
     if lrc.exists() {
@@ -88,7 +92,7 @@ pub fn sidecar_state(audio_path: &Path) -> SidecarState {
     SidecarState::None
 }
 
-/// Write `contents` to `path` atomically: a temp file in the same directory, then a rename.
+/// Write `contents` to `path` atomically via a temp file and rename.
 fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -100,6 +104,7 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     fs::rename(&tmp_path, path)
 }
 
+/// Ensure the lyrics string ends with a trailing newline.
 fn normalize(mut contents: String) -> String {
     if !contents.ends_with('\n') {
         contents.push('\n');
@@ -121,6 +126,7 @@ pub fn write_synced(audio_path: &Path, lyrics: &str, keep_plain: bool) -> io::Re
     Ok(())
 }
 
+/// Write a plain-text `.txt` sidecar (no timestamps).
 pub fn write_plain(audio_path: &Path, lyrics: &str) -> io::Result<()> {
     write_atomic(&txt_path(audio_path), &normalize(lyrics.to_string()))
 }

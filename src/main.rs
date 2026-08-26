@@ -23,6 +23,7 @@ fn main() -> ExitCode {
     }
 }
 
+/// Build an HTTP client from the shared CLI options.
 fn client_for(opts: &SharedOptions) -> Client {
     Client::new(ClientConfig {
         provider: opts.provider,

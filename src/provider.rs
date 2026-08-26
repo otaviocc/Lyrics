@@ -11,6 +11,10 @@
 
 use clap::ValueEnum;
 
+/// Supported lyrics providers.
+///
+/// All known providers speak the same LRCLIB wire format, so adding a new compatible
+/// service is a one-line addition to `ProviderKind` and `spec()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ProviderKind {
     /// The reference LRCLIB API: <https://lrclib.net/docs>.
@@ -19,6 +23,7 @@ pub enum ProviderKind {
     Lrcmux,
 }
 
+/// Concrete endpoints and display name for a lyrics provider.
 pub struct ProviderSpec {
     /// Short name used in logging and error messages.
     pub name: &'static str,
@@ -33,6 +38,7 @@ pub struct ProviderSpec {
 }
 
 impl ProviderKind {
+    /// Return the endpoints and configuration for this provider.
     pub fn spec(self) -> ProviderSpec {
         match self {
             ProviderKind::Lrclib => ProviderSpec {

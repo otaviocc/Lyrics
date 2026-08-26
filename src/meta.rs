@@ -18,6 +18,7 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "m4b", "mp4", "ogg", "opus", "wav", "aiff", "aif", "wma",
 ];
 
+/// Returns `true` if `path` has an extension matching a known audio format (case-insensitive).
 pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -25,6 +26,10 @@ pub fn is_audio_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Resolved metadata for a single audio file, ready for a lyrics lookup.
+///
+/// Title and artist are always present (resolution fails without them). Album and duration
+/// are optional: not every file carries them, and the path fallback never guesses duration.
 #[derive(Debug, Clone)]
 pub struct TrackMeta {
     /// Kept for callers/tests that need the source path alongside the resolved metadata;
@@ -42,6 +47,7 @@ pub struct TrackMeta {
     pub guessed: Vec<GuessedField>,
 }
 
+/// A metadata field that was filled in from the file path rather than an embedded tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuessedField {
     Title,
@@ -50,6 +56,7 @@ pub enum GuessedField {
 }
 
 impl GuessedField {
+    /// Human-readable name of the field, used in log output.
     pub fn label(self) -> &'static str {
         match self {
             GuessedField::Title => "title",
@@ -59,7 +66,7 @@ impl GuessedField {
     }
 }
 
-/// Raw tag values read from the file, before path fallback is applied.
+/// Raw tag values read directly from the audio file, before any path-based guessing.
 struct RawTags {
     title: Option<String>,
     artist: Option<String>,
@@ -67,13 +74,15 @@ struct RawTags {
     duration: Option<u32>,
 }
 
+/// Trim and return `None` for empty strings, so callers never deal with whitespace-only tags.
 fn non_empty(s: Option<String>) -> Option<String> {
     s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// Read title, artist, album, and duration straight from the audio file's tags via lofty.
+///
+/// Returns all-`None` fields when the file is unreadable or carries no recognized tags.
 fn read_raw_tags(path: &Path) -> RawTags {
-    // The sole lofty entry point used in this codebase. Read-only by construction: lofty's
-    // `Probe`/`read_from_path` API never opens the file for writing.
     let tagged = match lofty::read_from_path(path) {
         Ok(t) => t,
         Err(_) => {
@@ -107,6 +116,9 @@ fn read_raw_tags(path: &Path) -> RawTags {
 }
 
 /// Strip a leading track-number prefix like "01 ", "01. ", "01_", "01-" from a filename stem.
+///
+/// Digits without a following separator are not stripped (e.g. "2001 A Space Odyssey" yields
+/// "A Space Odyssey" but "21" stays "21").
 fn strip_track_number(stem: &str) -> &str {
     let mut chars = stem.char_indices().peekable();
     let mut digit_end = 0;
@@ -130,7 +142,6 @@ fn strip_track_number(stem: &str) -> &str {
         }
     }
     if sep_end == digit_end {
-        // Digits with no following separator (e.g. a year in the title) are not a track number.
         return stem;
     }
     stem[sep_end..].trim_start()
@@ -154,8 +165,6 @@ pub fn strip_trailing_markers(title: &str) -> Option<String> {
     while let Some(stripped) = strip_one_trailing_group(current) {
         let stripped = stripped.trim_end();
         if stripped.is_empty() {
-            // Don't strip a title down to nothing (e.g. the whole title is one bracketed
-            // group); that's not a useful retry.
             break;
         }
         current = stripped;
@@ -190,12 +199,17 @@ fn strip_one_trailing_group(s: &str) -> Option<&str> {
     Some(&s[..open_idx?])
 }
 
+/// Metadata guessed from the file's position in the directory tree (Artist/Album/Title).
 struct PathGuess {
     title: Option<String>,
     artist: Option<String>,
     album: Option<String>,
 }
 
+/// Derive title, album, and artist from a path shaped like `Artist/Album/01 Title.ext`.
+///
+/// The track-number prefix is stripped from the filename. Returns `None` for any field the
+/// path doesn't contain enough segments to fill.
 fn guess_from_path(path: &Path) -> PathGuess {
     let title = path
         .file_stem()
@@ -234,6 +248,10 @@ pub enum ResolvedMeta {
     Untagged,
 }
 
+/// Resolve a track's metadata from embedded tags, optionally falling back to path-based
+/// guessing when `path_fallback` is enabled.
+///
+/// Returns `Untagged` when title or artist could not be determined from either source.
 pub fn resolve(path: &Path, path_fallback: bool) -> ResolvedMeta {
     let raw = read_raw_tags(path);
     let mut guessed = Vec::new();
