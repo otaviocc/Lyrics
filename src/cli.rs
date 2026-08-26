@@ -39,6 +39,7 @@ pub enum Command {
     },
 }
 
+/// Options shared by both the `track` and `scan` subcommands.
 #[derive(Args, Debug, Clone)]
 pub struct SharedOptions {
     // --- Selection -----------------------------------------------------

@@ -13,6 +13,7 @@ use crate::http::{Client, LyricsRecord, pick_best_candidate};
 use crate::meta::{self, ResolvedMeta, TrackMeta};
 use crate::sidecar::{self, SidecarState};
 
+/// What happened when processing a single audio file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// Wrote a synced .lrc where nothing existed before.
@@ -50,6 +51,7 @@ impl Outcome {
     }
 }
 
+/// Tallies accumulated across a `scan` run, printed as the final summary line.
 #[derive(Debug, Default)]
 pub struct Summary {
     pub synced: u32,
@@ -63,6 +65,7 @@ pub struct Summary {
 }
 
 impl Summary {
+    /// Bump the counter for the given outcome.
     fn record(&mut self, outcome: Outcome) {
         match outcome {
             Outcome::Fetched => self.synced += 1,
@@ -76,6 +79,7 @@ impl Summary {
         }
     }
 
+    /// Format the summary as a single human-readable line.
     pub fn line(&self) -> String {
         format!(
             "synced: {}  upgraded: {}  plain: {}  instrumental: {}  skipped: {}  missing: {}  untagged: {}  errors: {}",
@@ -91,6 +95,7 @@ impl Summary {
     }
 }
 
+/// Print a message to stdout unless `--quiet` is set and verbosity level is met.
 fn log(opts: &SharedOptions, level: u8, msg: impl AsRef<str>) {
     if opts.quiet {
         return;
@@ -100,7 +105,7 @@ fn log(opts: &SharedOptions, level: u8, msg: impl AsRef<str>) {
     }
 }
 
-/// `/api/get`, falling back to `/api/search` (unless disabled) when it 404s.
+/// Try `/api/get` first, then fall back to `/api/search` unless disabled.
 fn lookup(
     client: &mut Client,
     meta: &TrackMeta,
@@ -154,9 +159,6 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> 
 
     let mut record = lookup(client, &meta, opts)?;
 
-    // A version marker like "(Acoustic)"/"[Live]"/"[Bonus Track]" tacked onto the title makes
-    // both /api/get and /api/search fail to find an otherwise-identical record (verified
-    // against the live API). Retry once with any trailing bracketed group(s) stripped.
     if record.is_none()
         && !opts.no_marker_fallback
         && let Some(stripped_title) = meta::strip_trailing_markers(&meta.title)
@@ -178,8 +180,6 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> 
         return Ok(Outcome::Missing);
     };
 
-    // Synced first (always), then plain, then the instrumental flag, so a record that carries
-    // both a flag and real lyrics still yields lyrics (see runner design, plan section 4).
     if let Some(synced) = record.synced_lyrics.filter(|s| !s.trim().is_empty()) {
         let outcome = if state == SidecarState::Plain {
             Outcome::Upgraded

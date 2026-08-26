@@ -24,6 +24,7 @@ const DEFAULT_USER_AGENT: &str = concat!(
     " (+https://github.com/otaviocc/Lyrics)"
 );
 
+/// A single lyrics record as returned by the LRCLIB-compatible API.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LyricsRecord {
@@ -40,6 +41,7 @@ pub struct LyricsRecord {
     pub synced_lyrics: Option<String>,
 }
 
+/// LRCLIB-style error envelope returned on non-retryable client errors.
 #[derive(Debug, Deserialize)]
 struct ErrorBody {
     #[allow(dead_code)]
@@ -48,6 +50,7 @@ struct ErrorBody {
     message: String,
 }
 
+/// Configuration for building an HTTP [`Client`].
 pub struct ClientConfig {
     pub provider: ProviderKind,
     pub user_agent: Option<String>,
@@ -56,6 +59,11 @@ pub struct ClientConfig {
     pub verbosity: u8,
 }
 
+/// Blocking HTTP client that talks to a lyrics provider.
+///
+/// Handles throttling, User-Agent identification, and automatic retry with exponential
+/// backoff on 429 and 5xx responses. Not async; the provider contracts require sequential
+/// requests, so async would add complexity for no benefit.
 pub struct Client {
     agent: ureq::Agent,
     spec: ProviderSpec,
@@ -67,11 +75,8 @@ pub struct Client {
 }
 
 impl Client {
+    /// Create a new client from the given configuration.
     pub fn new(config: ClientConfig) -> Self {
-        // `http_status_as_error(false)`: we need to read the `Retry-After` header on a 429
-        // response (D-guidance in docs: "your client MUST honor this header"), which ureq's
-        // default error-on-status behavior would discard the response before we could inspect
-        // it. Handling status codes ourselves below is what lets us do that.
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(10)))
             .http_status_as_error(false)
@@ -130,8 +135,6 @@ impl Client {
             let mut response = match result {
                 Ok(response) => response,
                 Err(err) => {
-                    // Transport-level failure (connect, TLS, timeout, ...), not a status
-                    // code at all. Retry with exponential backoff.
                     attempt += 1;
                     if attempt > self.max_retries {
                         return Err(err).with_context(|| {
@@ -158,9 +161,6 @@ impl Client {
 
             attempt += 1;
             if status == 429 {
-                // Mandatory per the docs: "Your client MUST honor this header. Ignoring it
-                // ... may result in a temporary ban." We honor it exactly, never substituting
-                // our own guess when it's present.
                 let wait = retry_after(response.headers())
                     .unwrap_or_else(|| Duration::from_secs(2u64.saturating_pow(attempt)));
                 if attempt > self.max_retries {
@@ -191,11 +191,6 @@ impl Client {
                 continue;
             }
 
-            // A non-retryable client error. Try to surface LRCLIB's structured error body
-            // ({code, name, message}). lrcmux's own error envelope is RFC 7807 shaped instead
-            // (title/detail/status/...), so this simply won't match there and falls back to
-            // the bare status code, a deliberate, graceful degradation rather than a second
-            // error-body parser for a provider whose errors we haven't needed to special-case.
             let message = response
                 .body_mut()
                 .read_json::<ErrorBody>()
@@ -205,6 +200,9 @@ impl Client {
         }
     }
 
+    /// Look up a track by title, artist, and (optionally) album and duration.
+    ///
+    /// Returns `Ok(None)` when the provider has no matching record (HTTP 404).
     pub fn get(&mut self, meta: &TrackMeta) -> Result<Option<LyricsRecord>> {
         let mut url = format!(
             "{}?track_name={}&artist_name={}",
@@ -239,9 +237,11 @@ impl Client {
     }
 }
 
-/// Parse a `Retry-After` header per RFC 9110: either an integer number of seconds, or an
-/// HTTP-date. Returns `None` if the header is absent or unparsable, in which case the caller
-/// falls back to exponential backoff.
+/// Parse a `Retry-After` header per RFC 9110.
+///
+/// Accepts either an integer number of seconds or an HTTP-date. Returns `None` when the
+/// header is absent or unparsable, in which case the caller falls back to exponential
+/// backoff.
 fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
     let value = headers.get("Retry-After")?.to_str().ok()?;
     if let Ok(seconds) = value.trim().parse::<u64>() {
@@ -252,6 +252,7 @@ fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
     target.duration_since(now).ok()
 }
 
+/// Percent-encode a string for use in a query parameter (application/x-www-form-urlencoded).
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -266,9 +267,10 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Pick the best `/api/search` candidate: reject anything outside `tolerance` seconds of the
-/// local duration (when known), then prefer synced-available, then closest duration, then a
-/// matching album name.
+/// Pick the best `/api/search` candidate.
+///
+/// Rejects anything outside `tolerance` seconds of the local duration (when known), then
+/// prefers synced-available, then closest duration, then a matching album name.
 pub fn pick_best_candidate(
     candidates: &[LyricsRecord],
     local_duration: Option<u32>,
@@ -303,7 +305,7 @@ pub fn pick_best_candidate(
     survivors.first().map(|c| (*c).clone())
 }
 
-/// Surface LRCLIB's structured error body for logging, best-effort.
+/// Format an LRCLIB error body for display in log output.
 fn describe_error(body: &ErrorBody) -> String {
     format!("{} ({}): {}", body.name, body.code, body.message)
 }
