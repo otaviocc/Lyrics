@@ -38,7 +38,11 @@ Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 lyrics scan ~/Music              # your whole library
 lyrics scan "~/Music/Radiohead"  # just one artist or album
 lyrics track "~/Music/Radiohead/OK Computer/01 Airbag.flac"   # a single file
+lyrics show "Airbag" --artist "Radiohead"                      # no audio file needed
 ```
+
+`show` looks up lyrics by artist and track name (no audio file required) and displays them in a
+pager. Timestamps are dimmed by default; pass `--no-color` to disable that.
 
 Run it again whenever you like: already-synced tracks are skipped, and anything still missing
 gets tried again in case it's shown up since.
@@ -74,6 +78,7 @@ Output
   --keep-plain              Keep the old .txt around after upgrading to synced
   -v, --verbose             Show per-track detail  (-vv adds request timing)
   -q, --quiet               Only print the final summary
+  --no-color                Disable colored output in `show`
 
 Network
   --provider <NAME>         lrclib or lrcmux  [default: lrclib]
