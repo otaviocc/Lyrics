@@ -1,14 +1,18 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
+use std::fs;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
 
-use lyrics::cli::{Cli, Command, SharedOptions};
+use lyrics::cli::{Cli, Command, Options, SharedOptions};
+use lyrics::config::{self, Config};
 use lyrics::http::{Client, ClientConfig};
-use lyrics::runner;
+use lyrics::lrc::{self, Severity};
+use lyrics::{runner, stats};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -23,8 +27,38 @@ fn main() -> ExitCode {
     }
 }
 
-/// Build an HTTP client from the shared CLI options.
-fn client_for(opts: &SharedOptions) -> Client {
+/// Load the config file `raw` points at (or the default location, unless `--no-config`) and
+/// resolve it against the CLI layer. The single place `Track`/`Scan`/`Show` go from raw CLI
+/// args to the concrete `Options` the rest of the crate consumes.
+///
+/// # Errors
+///
+/// Propagates a config file read/parse error. A missing file at the *default* location is not
+/// an error (see `config::load`) — having no config at all is the common case. A missing file
+/// at an *explicit* `--config <path>` is an error: the user named that path on purpose, so
+/// silently falling back to defaults would mask a typo instead of reporting it.
+fn resolve_options(raw: &SharedOptions) -> Result<Options> {
+    let config = if raw.no_config {
+        Config::default()
+    } else {
+        match raw.config.as_deref() {
+            Some(path) => {
+                if !path.exists() {
+                    anyhow::bail!("config file not found: {}", path.display());
+                }
+                config::load(path)?
+            }
+            None => match config::default_path() {
+                Some(path) => config::load(&path)?,
+                None => Config::default(),
+            },
+        }
+    };
+    Ok(raw.resolve(&config))
+}
+
+/// Build an HTTP client from the resolved options.
+fn client_for(opts: &Options) -> Client {
     Client::new(ClientConfig {
         provider: opts.provider,
         user_agent: opts.user_agent.clone(),
@@ -34,11 +68,69 @@ fn client_for(opts: &SharedOptions) -> Client {
     })
 }
 
+/// Check every resolved `.lrc` file and print diagnostics. Returns `Ok(false)` (exit 1) when
+/// any error was found, or any warning was found under `--strict`.
+fn run_lint(paths: &[PathBuf], strict: bool, max_gap: u32, quiet: bool) -> bool {
+    let (files, skipped) = lrc::resolve_lrc_paths(paths);
+    for path in &skipped {
+        eprintln!("skip      {}: not an LRC file", path.display());
+    }
+
+    let mut files_checked: u32 = 0;
+    let mut total_errors: u32 = 0;
+    let mut total_warnings: u32 = 0;
+
+    for path in &files {
+        let contents = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("error     {}: {err}", path.display());
+                total_errors = total_errors.saturating_add(1);
+                continue;
+            }
+        };
+        files_checked = files_checked.saturating_add(1);
+
+        for diag in lrc::lint(&contents, max_gap) {
+            match diag.severity {
+                Severity::Error => total_errors = total_errors.saturating_add(1),
+                Severity::Warning => total_warnings = total_warnings.saturating_add(1),
+            }
+            if quiet {
+                continue;
+            }
+            if diag.line == 0 {
+                println!(
+                    "{}: {}: {}",
+                    path.display(),
+                    diag.severity.label(),
+                    diag.message
+                );
+            } else {
+                println!(
+                    "{}:{}: {}: {}",
+                    path.display(),
+                    diag.line,
+                    diag.severity.label(),
+                    diag.message
+                );
+            }
+        }
+    }
+
+    if !quiet {
+        println!("{files_checked} files checked, {total_errors} errors, {total_warnings} warnings");
+    }
+
+    total_errors == 0 && !(strict && total_warnings > 0)
+}
+
 /// Returns `Ok(true)` on overall success, `Ok(false)` if the run completed but every track
 /// errored (see plan §4 exit-code rule).
 fn run(cli: Cli) -> Result<bool> {
     match cli.command {
         Command::Track { file, options } => {
+            let options = resolve_options(&options)?;
             let mut client = client_for(&options);
             let outcome = runner::process_track(&mut client, &file, &options)?;
             if !options.quiet {
@@ -50,6 +142,7 @@ fn run(cli: Cli) -> Result<bool> {
             if !dir.is_dir() {
                 anyhow::bail!("{} is not a directory", dir.display());
             }
+            let options = resolve_options(&options)?;
             let mut client = client_for(&options);
             let summary = runner::scan(&mut client, &dir, &options)?;
             if !options.quiet {
@@ -66,12 +159,33 @@ fn run(cli: Cli) -> Result<bool> {
             let all_failed = summary.errors > 0 && total_processed == 0;
             Ok(!all_failed)
         }
+        Command::Stats { dir, verbose } => {
+            if !dir.is_dir() {
+                anyhow::bail!("{} is not a directory", dir.display());
+            }
+            let census = stats::collect(&dir);
+            print!("{}", census.render());
+            if verbose > 0 && !census.orphan_paths.is_empty() {
+                println!("\nOrphaned sidecar paths:");
+                for path in &census.orphan_paths {
+                    println!("  {}", path.display());
+                }
+            }
+            Ok(true)
+        }
+        Command::Lint {
+            paths,
+            strict,
+            max_gap,
+            quiet,
+        } => Ok(run_lint(&paths, strict, max_gap, quiet)),
         Command::Show {
             track,
             artist,
             album,
             options,
         } => {
+            let options = resolve_options(&options)?;
             let mut client = client_for(&options);
             let record =
                 runner::lookup_lyrics(&mut client, &track, &artist, album.as_deref(), &options)?;

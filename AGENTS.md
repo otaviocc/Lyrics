@@ -33,25 +33,37 @@ Instructions for any coding agent working in this repository.
 src/
   lib.rs      : module declarations; the library crate integration tests link against
   main.rs     : thin binary: parses CLI, wires it to runner, sets the process exit code
-  cli.rs      : clap derive definitions (Cli, Command, SharedOptions)
+  cli.rs      : clap derive definitions (Cli, Command, SharedOptions); SharedOptions::resolve
+                is the one place default -> config file -> CLI precedence is defined,
+                producing the concrete Options that runner/http actually consume
+  config.rs   : ~/.config/lyrics/config.toml loading/parsing; no opinion on precedence
   meta.rs     : TrackMeta resolution: tag reading (lofty) + optional --path-fallback
   provider.rs : ProviderKind enum + ProviderSpec (base URLs, display name) per provider
   http.rs     : HTTP client: throttling, retry/Retry-After handling, /api/get, /api/search,
                 candidate scoring; shared across every provider, parameterized by ProviderSpec
-  sidecar.rs  : sidecar path derivation, on-disk state detection, atomic writes
-  runner.rs   : per-track decision logic (process_track) and the scan walk
+  sidecar.rs  : sidecar path derivation, on-disk state detection, atomic writes.
+                sidecar_state (Synced/Plain/None, used by scan) is a lossy view over the
+                finer-grained sidecar_detail (splits out the instrumental marker, used by
+                stats) - widening SidecarState itself would change scan/--force semantics
+  runner.rs   : per-track decision logic (process_track), the scan walk, and
+                walk_audio_files (shared by scan and stats)
+  stats.rs    : read-only coverage census (`lyrics stats`); never constructs an http::Client
+  lrc.rs      : LRC parsing and lint checks (`lyrics lint`); never constructs an http::Client
 tests/
   read_only_guarantee.rs  : integration test asserting audio files are unchanged after a run
+  no_write_commands.rs    : integration test asserting stats/lint never write or delete
   fixtures/sample.flac    : small tagged fixture (regenerate with the ffmpeg command below)
 ```
 
-Where a change belongs: CLI surface goes in `cli.rs`. Metadata resolution goes in
-`meta.rs`. Adding a new LRCLIB-API-compatible provider is one match arm in
-`ProviderKind::spec()` in `provider.rs`. Talking to a provider (throttling, retries,
-request shape) goes in `http.rs`. What file gets written where, or what state a
-sidecar is already in, goes in `sidecar.rs`. The decision of what to do with a track
-goes in `runner.rs`. A provider whose response shape isn't LRCLIB-compatible doesn't
-fit this seam.
+Where a change belongs: CLI surface goes in `cli.rs`. Persistent config loading goes in
+`config.rs`; how it's merged with CLI flags goes in `cli.rs`'s `SharedOptions::resolve`, not
+in `config.rs`. Metadata resolution goes in `meta.rs`. Adding a new LRCLIB-API-compatible
+provider is one match arm in `ProviderKind::spec()` in `provider.rs`. Talking to a provider
+(throttling, retries, request shape) goes in `http.rs`. What file gets written where, or what
+state a sidecar is already in, goes in `sidecar.rs`. The decision of what to do with a track
+goes in `runner.rs`. `stats` and `lint` are read-only, offline commands: neither should ever
+construct an `http::Client` or call a `sidecar::write_*` function. A provider whose response
+shape isn't LRCLIB-compatible doesn't fit this seam.
 
 ## Commands
 

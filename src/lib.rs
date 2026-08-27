@@ -5,8 +5,11 @@
 //! exercise the read/write paths directly. See `tests/read_only_guarantee.rs`.
 
 pub mod cli;
+pub mod config;
 pub mod http;
+pub mod lrc;
 pub mod meta;
 pub mod provider;
 pub mod runner;
 pub mod sidecar;
+pub mod stats;

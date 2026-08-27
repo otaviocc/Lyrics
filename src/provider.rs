@@ -10,12 +10,14 @@
 //! `Provider` trait becomes worth introducing, not before.
 
 use clap::ValueEnum;
+use serde::Deserialize;
 
 /// Supported lyrics providers.
 ///
 /// All known providers speak the same LRCLIB wire format, so adding a new compatible
 /// service is a one-line addition to `ProviderKind` and `spec()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     /// The reference LRCLIB API: <https://lrclib.net/docs>.
     Lrclib,

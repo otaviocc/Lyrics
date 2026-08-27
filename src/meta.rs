@@ -18,12 +18,22 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "m4b", "mp4", "ogg", "opus", "wav", "aiff", "aif", "wma",
 ];
 
+/// Returns `true` if `path`'s extension case-insensitively matches one of `extensions`.
+///
+/// Shared by every extension check in the crate (`is_audio_file` here, plus the `.lrc`/`.txt`
+/// checks in `stats` and `lrc`), so a future change to how extensions are compared only needs
+/// to happen once.
+#[must_use]
+pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| extensions.iter().any(|a| a.eq_ignore_ascii_case(e)))
+}
+
 /// Returns `true` if `path` has an extension matching a known audio format (case-insensitive).
 #[must_use]
 pub fn is_audio_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| AUDIO_EXTENSIONS.iter().any(|a| a.eq_ignore_ascii_case(e)))
+    has_extension(path, AUDIO_EXTENSIONS)
 }
 
 /// Resolved metadata for a single audio file, ready for a lyrics lookup.

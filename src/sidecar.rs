@@ -27,6 +27,20 @@ pub enum SidecarState {
     None,
 }
 
+/// Finer-grained on-disk state than [`SidecarState`]: splits out the instrumental marker.
+///
+/// Used by `stats`, which wants to report instrumental tracks separately; `scan`/
+/// `process_track` keep using [`SidecarState`] unchanged, since treating a marked-instrumental
+/// track exactly like a genuinely synced one (no repeat request) is the entire point of how
+/// the marker is written. See `sidecar_state`, which is now a lossy view over this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidecarDetail {
+    Synced,
+    Instrumental,
+    Plain,
+    None,
+}
+
 /// Build the sidecar path for `audio_path` with the given extension ("lrc" or "txt").
 ///
 /// Debug-asserts that the result is never equal to the input. This is the structural
@@ -77,22 +91,37 @@ fn is_timestamp_line(line: &str) -> bool {
 }
 
 /// Detect whether an audio file has a synced `.lrc`, a plain `.txt`, or no sidecar at all.
+#[must_use]
 pub fn sidecar_state(audio_path: &Path) -> SidecarState {
+    match sidecar_detail(audio_path) {
+        SidecarDetail::Synced | SidecarDetail::Instrumental => SidecarState::Synced,
+        SidecarDetail::Plain => SidecarState::Plain,
+        SidecarDetail::None => SidecarState::None,
+    }
+}
+
+/// Detect whether an audio file has a synced `.lrc` (further split into a genuine sync vs.
+/// the instrumental marker), a plain `.txt`, or no sidecar at all.
+#[must_use]
+pub fn sidecar_detail(audio_path: &Path) -> SidecarDetail {
     let lrc = lrc_path(audio_path);
     if lrc.exists() {
-        if let Ok(contents) = fs::read_to_string(&lrc)
-            && contents.lines().any(is_timestamp_line)
-        {
-            return SidecarState::Synced;
+        if let Ok(contents) = fs::read_to_string(&lrc) {
+            if contents.trim() == INSTRUMENTAL_MARKER.trim() {
+                return SidecarDetail::Instrumental;
+            }
+            if contents.lines().any(is_timestamp_line) {
+                return SidecarDetail::Synced;
+            }
         }
-        return SidecarState::Plain;
+        return SidecarDetail::Plain;
     }
 
     if txt_path(audio_path).exists() {
-        return SidecarState::Plain;
+        return SidecarDetail::Plain;
     }
 
-    SidecarState::None
+    SidecarDetail::None
 }
 
 /// Write `contents` to `path` atomically via a temp file and rename.
