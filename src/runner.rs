@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context as _, Result};
 use walkdir::WalkDir;
 
-use crate::cli::SharedOptions;
+use crate::cli::Options;
 use crate::http::{Client, LyricsRecord, pick_best_candidate};
 use crate::meta::{self, ResolvedMeta, TrackMeta};
 use crate::sidecar::{self, SidecarState};
@@ -100,7 +100,7 @@ impl Summary {
 }
 
 /// Print a message to stdout unless `--quiet` is set and verbosity level is met.
-fn log(opts: &SharedOptions, level: u8, msg: impl AsRef<str>) {
+fn log(opts: &Options, level: u8, msg: impl AsRef<str>) {
     if opts.quiet {
         return;
     }
@@ -110,11 +110,7 @@ fn log(opts: &SharedOptions, level: u8, msg: impl AsRef<str>) {
 }
 
 /// Try `/api/get` first, then fall back to `/api/search` unless disabled.
-fn lookup(
-    client: &mut Client,
-    meta: &TrackMeta,
-    opts: &SharedOptions,
-) -> Result<Option<LyricsRecord>> {
+fn lookup(client: &mut Client, meta: &TrackMeta, opts: &Options) -> Result<Option<LyricsRecord>> {
     let mut record = client.get(meta)?;
     if record.is_none() && !opts.no_search_fallback {
         let candidates = client.search(meta)?;
@@ -133,7 +129,7 @@ fn lookup(
 /// # Errors
 ///
 /// Propagates I/O errors from sidecar writes and network errors from the lyrics provider.
-pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> Result<Outcome> {
+pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result<Outcome> {
     let resolved = meta::resolve(path, opts.path_fallback);
     let meta = match resolved {
         ResolvedMeta::Untagged => {
@@ -232,6 +228,23 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> 
     Ok(Outcome::Missing)
 }
 
+/// Every recognized audio file under `dir`, in deterministic (path-sorted) order.
+///
+/// `scan`'s own walk. `stats::collect` classifies audio vs. sidecar files in a single pass
+/// instead of calling this, but shares the same underlying `meta::is_audio_file` check, so
+/// the two can never disagree about which files count as tracks.
+#[must_use]
+pub fn walk_audio_files(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = WalkDir::new(dir)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|e| e.file_type().is_file() && meta::is_audio_file(e.path()))
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    paths.sort();
+    paths
+}
+
 /// Walk `dir` recursively, processing every recognized audio file in deterministic
 /// (name-sorted) order, strictly sequentially.
 ///
@@ -239,22 +252,15 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &SharedOptions) -> 
 ///
 /// Propagates the first network or I/O error that cannot be recovered from; per-track errors
 /// are caught and counted in the returned [`Summary`].
-pub fn scan(client: &mut Client, dir: &Path, opts: &SharedOptions) -> Result<Summary> {
+pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> {
     let mut summary = Summary::default();
 
-    let mut entries: Vec<_> = WalkDir::new(dir)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .filter(|e| e.file_type().is_file() && meta::is_audio_file(e.path()))
-        .collect();
-    entries.sort_by(|a, b| a.path().cmp(b.path()));
-
-    for entry in entries {
-        match process_track(client, entry.path(), opts) {
+    for path in walk_audio_files(dir) {
+        match process_track(client, &path, opts) {
             Ok(outcome) => summary.record(outcome),
             Err(err) => {
                 summary.errors = summary.errors.saturating_add(1);
-                eprintln!("error     {}: {err:#}", entry.path().display());
+                eprintln!("error     {}: {err:#}", path.display());
             }
         }
     }
@@ -274,7 +280,7 @@ pub fn lookup_lyrics(
     track: &str,
     artist: &str,
     album: Option<&str>,
-    opts: &SharedOptions,
+    opts: &Options,
 ) -> Result<Option<LyricsRecord>> {
     let meta = TrackMeta {
         path: PathBuf::from("<show>"),
