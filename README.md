@@ -1,5 +1,11 @@
 # lyrics
 
+[![CI](https://img.shields.io/github/actions/workflow/status/otaviocc/Lyrics/ci.yml?branch=main)](https://github.com/otaviocc/Lyrics/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/otaviocc/Lyrics)](https://github.com/otaviocc/Lyrics/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/lyrics-sidecar.svg)](https://crates.io/crates/lyrics-sidecar)
+[![license](https://img.shields.io/crates/l/lyrics-sidecar.svg)](https://github.com/otaviocc/Lyrics/blob/main/LICENSE)
+[![homebrew](https://img.shields.io/badge/homebrew-lyrics-blue.svg)](https://github.com/otaviocc/homebrew-tap)
+
 Never search for lyrics again. Point `lyrics` at your music library and it drops a `.lrc` or
 `.txt` file next to every track, pulled from [LRCLIB](https://lrclib.net) or
 [lrcmux](https://lrcmux.dev), free and key-less lyrics providers. Synced, timestamped lyrics
