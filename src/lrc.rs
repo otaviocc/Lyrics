@@ -219,12 +219,10 @@ pub fn parse_line(line: &str) -> Line<'_> {
 
 /// Check `contents` (an `.lrc` file's text) and return every problem found.
 ///
-/// Diagnostics come back in line order, most-relevant first within each line. `max_gap_secs`
-/// is the threshold for the "large gap between timestamps" warning; `0` disables that check.
+/// Diagnostics come back in line order, most-relevant first within each line.
 #[must_use]
-#[allow(clippy::arithmetic_side_effects)] // Only saturating ops and one literal (1000) divide.
 #[allow(clippy::too_many_lines)]
-pub fn lint(contents: &str, max_gap_secs: u32) -> Vec<Diagnostic> {
+pub fn lint(contents: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut seen_timed_line = false;
     let mut any_timed_line = false;
@@ -323,23 +321,13 @@ pub fn lint(contents: &str, max_gap_secs: u32) -> Vec<Diagnostic> {
                 }
 
                 if let Some(millis) = first_millis {
-                    if let Some(prev) = last_millis {
-                        if millis < prev {
-                            diags.push(Diagnostic::error(
-                                line_no,
-                                "timestamp is earlier than the previous line's".to_owned(),
-                            ));
-                        } else if max_gap_secs > 0 {
-                            let gap_secs = millis.saturating_sub(prev) / 1000;
-                            if gap_secs > max_gap_secs {
-                                diags.push(Diagnostic::warning(
-                                    line_no,
-                                    format!(
-                                        "{gap_secs}s gap since the previous timestamp exceeds --max-gap ({max_gap_secs}s)"
-                                    ),
-                                ));
-                            }
-                        }
+                    if let Some(prev) = last_millis
+                        && millis < prev
+                    {
+                        diags.push(Diagnostic::error(
+                            line_no,
+                            "timestamp is earlier than the previous line's".to_owned(),
+                        ));
                     }
                     last_millis = Some(millis);
                 }
@@ -460,7 +448,7 @@ mod tests {
 
     #[test]
     fn instrumental_marker_lints_clean() {
-        let diags = lint("[00:00.00]Instrumental\n", 60);
+        let diags = lint("[00:00.00]Instrumental\n");
         assert!(diags.is_empty(), "{diags:?}");
     }
 
@@ -468,19 +456,19 @@ mod tests {
     fn clean_synced_file_lints_clean() {
         let contents = "[ar:Some Artist]\n[ti:Some Title]\n\
                          [00:01.00]First line\n[00:05.50]Second line\n[00:12.00]Third line\n";
-        let diags = lint(contents, 60);
+        let diags = lint(contents);
         assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]
     fn flags_out_of_order_timestamps() {
-        let diags = lint("[00:10.00]Later\n[00:05.00]Earlier\n", 60);
+        let diags = lint("[00:10.00]Later\n[00:05.00]Earlier\n");
         assert_eq!(severities(&diags), vec![(2, Severity::Error)]);
     }
 
     #[test]
     fn flags_seconds_out_of_range() {
-        let diags = lint("[00:75.00]Oops\n", 60);
+        let diags = lint("[00:75.00]Oops\n");
         assert!(
             diags
                 .iter()
@@ -490,7 +478,7 @@ mod tests {
 
     #[test]
     fn flags_duplicate_timestamps() {
-        let diags = lint("[00:01.00]A\n[00:01.00]B\n", 60);
+        let diags = lint("[00:01.00]A\n[00:01.00]B\n");
         assert!(
             diags
                 .iter()
@@ -500,7 +488,7 @@ mod tests {
 
     #[test]
     fn flags_non_canonical_precision_and_padding() {
-        let diags = lint("[0:01]No fraction, one digit minute\n", 60);
+        let diags = lint("[0:01]No fraction, one digit minute\n");
         assert_eq!(
             diags
                 .iter()
@@ -512,13 +500,13 @@ mod tests {
 
     #[test]
     fn flags_unknown_metadata_key() {
-        let diags = lint("[xy:whatever]\n", 60);
+        let diags = lint("[xy:whatever]\n");
         assert!(diags.iter().any(|d| d.message.contains("unknown metadata")));
     }
 
     #[test]
     fn flags_metadata_after_timed_line() {
-        let diags = lint("[00:01.00]Hi\n[ar:Late Artist]\n", 60);
+        let diags = lint("[00:01.00]Hi\n[ar:Late Artist]\n");
         assert!(
             diags
                 .iter()
@@ -528,7 +516,7 @@ mod tests {
 
     #[test]
     fn flags_untimed_line_among_timed_lines() {
-        let diags = lint("[00:01.00]Hi\nstray text\n[00:02.00]Bye\n", 60);
+        let diags = lint("[00:01.00]Hi\nstray text\n[00:02.00]Bye\n");
         assert!(
             diags
                 .iter()
@@ -537,24 +525,14 @@ mod tests {
     }
 
     #[test]
-    fn flags_large_gap_and_respects_zero_disabling_it() {
-        let contents = "[00:01.00]A\n[05:00.00]B\n";
-        let with_check = lint(contents, 60);
-        assert!(with_check.iter().any(|d| d.message.contains("gap")));
-
-        let without_check = lint(contents, 0);
-        assert!(!without_check.iter().any(|d| d.message.contains("gap")));
-    }
-
-    #[test]
     fn flags_bad_offset_value() {
-        let diags = lint("[offset:not-a-number]\n", 60);
+        let diags = lint("[offset:not-a-number]\n");
         assert!(diags.iter().any(|d| d.message.contains("signed integer")));
     }
 
     #[test]
     fn warns_when_no_timed_lines_at_all() {
-        let diags = lint("[ar:Artist]\njust some text\n", 60);
+        let diags = lint("[ar:Artist]\njust some text\n");
         assert!(
             diags
                 .iter()
