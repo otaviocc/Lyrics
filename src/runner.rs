@@ -343,13 +343,16 @@ fn colorize_timestamps(text: &str) -> String {
         if trimmed.starts_with('[')
             && let Some(close) = trimmed.find(']')
         {
+            let lyric = trimmed[close.saturating_add(1)..].trim_start();
             let prefix_len = line.len().saturating_sub(trimmed.len());
-            // Prefix (leading whitespace) + dimmed timestamp + reset + rest of line
             out.push_str(&line[..prefix_len]);
             out.push_str(GRAY);
             out.push_str(&trimmed[..=close]);
             out.push_str(RESET);
-            out.push_str(&trimmed[close.saturating_add(1)..]);
+            if !lyric.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(lyric);
             out.push('\n');
             continue;
         }
@@ -357,4 +360,39 @@ fn colorize_timestamps(text: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::colorize_timestamps;
+
+    const GRAY: &str = "\x1b[38;5;240m";
+    const RESET: &str = "\x1b[0m";
+
+    #[test]
+    fn colorize_inserts_a_space_between_timestamp_and_lyric() {
+        let rendered = colorize_timestamps("[00:17.12]Hello world");
+        assert_eq!(rendered, format!("{GRAY}[00:17.12]{RESET} Hello world\n"));
+    }
+
+    #[test]
+    fn colorize_normalizes_leading_whitespace_to_one_space() {
+        let rendered = colorize_timestamps("[00:17.12]   Hello world");
+        assert_eq!(rendered, format!("{GRAY}[00:17.12]{RESET} Hello world\n"));
+    }
+
+    #[test]
+    fn colorize_preserves_lines_without_timestamps() {
+        let rendered = colorize_timestamps("plain line\n[00:17.12]lyric");
+        assert_eq!(
+            rendered,
+            format!("plain line\n{GRAY}[00:17.12]{RESET} lyric\n")
+        );
+    }
+
+    #[test]
+    fn colorize_blank_lyric_line_gets_no_trailing_space() {
+        let rendered = colorize_timestamps("[00:17.12]");
+        assert_eq!(rendered, format!("{GRAY}[00:17.12]{RESET}\n"));
+    }
 }
