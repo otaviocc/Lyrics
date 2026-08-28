@@ -120,6 +120,9 @@ pub enum Line<'a> {
     /// One or more leading timestamp tags followed by the lyric text.
     Timed {
         stamps: Vec<Timestamp>,
+        /// Everything after the last timestamp tag. Blank (or whitespace-only) makes this a
+        /// *break entry* rather than a lyric: a marker telling a player when to stop
+        /// displaying the previous line. LRCLIB ends most of its synced records with one.
         text: &'a str,
     },
     /// Non-blank text with no leading `[` at all.
@@ -220,6 +223,10 @@ pub fn parse_line(line: &str) -> Line<'_> {
 /// Check `contents` (an `.lrc` file's text) and return every problem found.
 ///
 /// Diagnostics come back in line order, most-relevant first within each line.
+///
+/// Break entries (see [`Line::Timed`]'s `text`) are exempt from the duplicate-timestamp
+/// check, and are not recorded as seen either: sharing a timestamp with the line they
+/// terminate is exactly what they are for, so neither direction is a duplicate.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn lint(contents: &str) -> Vec<Diagnostic> {
@@ -274,9 +281,10 @@ pub fn lint(contents: &str) -> Vec<Diagnostic> {
                 ));
             }
 
-            Line::Timed { stamps, .. } => {
+            Line::Timed { stamps, text } => {
                 any_timed_line = true;
                 seen_timed_line = true;
+                let is_break_entry = text.trim().is_empty();
                 let mut first_millis = None;
 
                 for ts in &stamps {
@@ -304,13 +312,17 @@ pub fn lint(contents: &str) -> Vec<Diagnostic> {
                             if first_millis.is_none() {
                                 first_millis = Some(millis);
                             }
-                            if let Some(&first_seen) = seen_stamps.get(&millis) {
-                                diags.push(Diagnostic::warning(
-                                    line_no,
-                                    format!("duplicate timestamp, first seen on line {first_seen}"),
-                                ));
-                            } else {
-                                seen_stamps.insert(millis, line_no);
+                            if !is_break_entry {
+                                if let Some(&first_seen) = seen_stamps.get(&millis) {
+                                    diags.push(Diagnostic::warning(
+                                        line_no,
+                                        format!(
+                                            "duplicate timestamp, first seen on line {first_seen}"
+                                        ),
+                                    ));
+                                } else {
+                                    seen_stamps.insert(millis, line_no);
+                                }
                             }
                         }
                         None => diags.push(Diagnostic::error(
@@ -484,6 +496,35 @@ mod tests {
                 .iter()
                 .any(|d| d.severity == Severity::Warning && d.message.contains("duplicate"))
         );
+    }
+
+    /// A timed line with blank text is an LRC break entry, not a lyric: it marks when the
+    /// previous line should stop being displayed. Sharing a timestamp with a real line is
+    /// legitimate, so it must not be reported as a duplicate.
+    #[test]
+    fn break_entry_sharing_a_timestamp_is_not_a_duplicate() {
+        let diags = lint("[00:01.00]A\n[00:01.00]\n");
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    /// The other half of the fix: a break entry must not be *recorded* either, or the real
+    /// lyric line that follows it at the same timestamp gets flagged instead.
+    #[test]
+    fn break_entry_does_not_poison_a_later_real_line() {
+        let diags = lint("[00:01.00]\n[00:01.00]A\n");
+        assert!(
+            !diags.iter().any(|d| d.message.contains("duplicate")),
+            "{diags:?}"
+        );
+    }
+
+    /// The shape LRCLIB actually returns, and what prompted the fix: lyric lines followed by
+    /// a trailing break entry at the same timestamp as the last one.
+    #[test]
+    fn realistic_lrclib_tail_lints_clean() {
+        let contents = "[04:43.70]There's gonna be Hell\n                         [04:51.97]There's gonna be Hell.\n                         [04:51.97]\n";
+        let diags = lint(contents);
+        assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]
