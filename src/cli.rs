@@ -65,11 +65,6 @@ pub enum Command {
         #[arg(long)]
         strict: bool,
 
-        /// Warn when the gap between consecutive timestamps exceeds this many seconds
-        /// (0 disables the check).
-        #[arg(long, default_value_t = 60)]
-        max_gap: u32,
-
         /// Print only the final summary line.
         #[arg(short, long)]
         quiet: bool,

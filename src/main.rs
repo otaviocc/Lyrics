@@ -70,7 +70,7 @@ fn client_for(opts: &Options) -> Client {
 
 /// Check every resolved `.lrc` file and print diagnostics. Returns `Ok(false)` (exit 1) when
 /// any error was found, or any warning was found under `--strict`.
-fn run_lint(paths: &[PathBuf], strict: bool, max_gap: u32, quiet: bool) -> bool {
+fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
     let (files, skipped) = lrc::resolve_lrc_paths(paths);
     for path in &skipped {
         eprintln!("skip      {}: not an LRC file", path.display());
@@ -91,7 +91,7 @@ fn run_lint(paths: &[PathBuf], strict: bool, max_gap: u32, quiet: bool) -> bool 
         };
         files_checked = files_checked.saturating_add(1);
 
-        for diag in lrc::lint(&contents, max_gap) {
+        for diag in lrc::lint(&contents) {
             match diag.severity {
                 Severity::Error => total_errors = total_errors.saturating_add(1),
                 Severity::Warning => total_warnings = total_warnings.saturating_add(1),
@@ -176,9 +176,8 @@ fn run(cli: Cli) -> Result<bool> {
         Command::Lint {
             paths,
             strict,
-            max_gap,
             quiet,
-        } => Ok(run_lint(&paths, strict, max_gap, quiet)),
+        } => Ok(run_lint(&paths, strict, quiet)),
         Command::Show {
             track,
             artist,

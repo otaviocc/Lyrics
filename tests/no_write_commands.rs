@@ -76,7 +76,7 @@ fn stats_and_lint_never_modify_the_tree() {
 
     for path in &lrc_files {
         let contents = fs::read_to_string(path).unwrap();
-        let _ = lrc::lint(&contents, 60);
+        let _ = lrc::lint(&contents);
     }
 
     let after = snapshot(tmp.path());

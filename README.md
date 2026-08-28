@@ -81,9 +81,9 @@ Two read-only commands make no network requests and never write anything:
   paths. A fast way to check whether a `scan` is even worth running.
 - **`lyrics lint <path>...`** checks one or more `.lrc` files (or directories, searched
   recursively) for format and sync problems: malformed timestamps, out-of-order or duplicate
-  timestamps, non-canonical `[MM:SS.xx]` formatting, unknown metadata tags, and large gaps
-  between lines. Useful after hand-editing a sidecar to fix a typo. Exits non-zero on any
-  error, or on any warning under `--strict`.
+  timestamps, non-canonical `[MM:SS.xx]` formatting, and unknown metadata tags. Useful after
+  hand-editing a sidecar to fix a typo. Exits non-zero on any error, or on any warning under
+  `--strict`.
 
 ## Options
 
