@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::tag::Accessor;
+use lofty::tag::{Accessor, ItemKey, Tag};
 
 /// Audio file extensions this tool will consider during a `scan`.
 pub const AUDIO_EXTENSIONS: &[&str] = &[
@@ -52,6 +52,18 @@ pub struct TrackMeta {
     /// Duration in whole seconds, when readable from the file's audio properties.
     /// Never derived from the path.
     pub duration: Option<u32>,
+    /// Album artist, when tagged. Distinct from `artist`: on a compilation every track carries
+    /// its own `artist` while sharing one `album_artist`. `ebook` groups chapters by this,
+    /// falling back to `artist`. Never derived from the path.
+    pub album_artist: Option<String>,
+    /// Track number within its disc, when tagged. Never derived from the path (the filename's
+    /// leading digits are only ever *stripped*, by `strip_track_number`, never trusted as a
+    /// value).
+    pub track_number: Option<u32>,
+    /// Disc number for multi-disc releases, when tagged. Absent means a single-disc album.
+    pub disc_number: Option<u32>,
+    /// Release year, when tagged.
+    pub year: Option<u32>,
     /// Fields that were filled in via `--path-fallback` rather than an embedded tag,
     /// reported back to the caller for logging.
     pub guessed: Vec<GuessedField>,
@@ -83,6 +95,60 @@ struct RawTags {
     artist: Option<String>,
     album: Option<String>,
     duration: Option<u32>,
+    album_artist: Option<String>,
+    track_number: Option<u32>,
+    disc_number: Option<u32>,
+    year: Option<u32>,
+}
+
+impl RawTags {
+    /// All-`None`: the file was unreadable, or carried no recognized tags.
+    const fn empty() -> Self {
+        Self {
+            title: None,
+            artist: None,
+            album: None,
+            duration: None,
+            album_artist: None,
+            track_number: None,
+            disc_number: None,
+            year: None,
+        }
+    }
+}
+
+/// Read the album artist, which unlike title/artist/album has no `Accessor` method and must be
+/// looked up by its `ItemKey` (lofty maps the per-format spellings — `TPE2`, `ALBUMARTIST`,
+/// `aART` — onto this one key).
+fn album_artist(tag: &Tag) -> Option<String> {
+    non_empty(tag.get_string(ItemKey::AlbumArtist).map(str::to_owned))
+}
+
+/// Read the release year. There is no `Accessor` method for it, and the tag is routinely a full
+/// date (`"1991-08-12"`) rather than a bare year, so only the leading four-digit run is taken.
+/// `RecordingDate` is tried first: for `ID3v2` that's `TDRC`, the modern frame, with the legacy
+/// `Year` key as the fallback.
+fn year(tag: &Tag) -> Option<u32> {
+    tag.get_string(ItemKey::RecordingDate)
+        .or_else(|| tag.get_string(ItemKey::Year))
+        .and_then(parse_year)
+}
+
+/// Take the four-digit year off the front of a date tag value.
+///
+/// Split out from `year` so it can be tested without building a `Tag`: this crate only ever
+/// *reads* tags, and constructing one in a test would put tag-mutation calls in `src/` that the
+/// read-only guard grep is meant to keep out.
+fn parse_year(raw: &str) -> Option<u32> {
+    let digits: String = raw
+        .trim()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.len() != 4 {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// Trim and return `None` for empty strings, so callers never deal with whitespace-only tags.
@@ -95,12 +161,7 @@ fn non_empty(s: Option<String>) -> Option<String> {
 /// Returns all-`None` fields when the file is unreadable or carries no recognized tags.
 fn read_raw_tags(path: &Path) -> RawTags {
     let Ok(tagged) = lofty::read_from_path(path) else {
-        return RawTags {
-            title: None,
-            artist: None,
-            album: None,
-            duration: None,
-        };
+        return RawTags::empty();
     };
 
     let duration = u32::try_from(tagged.properties().duration().as_secs())
@@ -108,19 +169,22 @@ fn read_raw_tags(path: &Path) -> RawTags {
         .filter(|&d| d > 0);
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-    let (title, artist, album) = tag.map_or((None, None, None), |tag| {
-        (
-            non_empty(tag.title().map(|s| s.to_string())),
-            non_empty(tag.artist().map(|s| s.to_string())),
-            non_empty(tag.album().map(|s| s.to_string())),
-        )
-    });
+    let Some(tag) = tag else {
+        return RawTags {
+            duration,
+            ..RawTags::empty()
+        };
+    };
 
     RawTags {
-        title,
-        artist,
-        album,
+        title: non_empty(tag.title().map(|s| s.to_string())),
+        artist: non_empty(tag.artist().map(|s| s.to_string())),
+        album: non_empty(tag.album().map(|s| s.to_string())),
         duration,
+        album_artist: album_artist(tag),
+        track_number: tag.track(),
+        disc_number: tag.disk(),
+        year: year(tag),
     }
 }
 
@@ -300,6 +364,10 @@ pub fn resolve(path: &Path, path_fallback: bool) -> ResolvedMeta {
             artist,
             album,
             duration: raw.duration,
+            album_artist: raw.album_artist,
+            track_number: raw.track_number,
+            disc_number: raw.disc_number,
+            year: raw.year,
             guessed,
         }),
         _ => ResolvedMeta::Untagged,
@@ -382,6 +450,30 @@ mod tests {
         assert_eq!(guess.title.as_deref(), Some("Track Title"));
         assert_eq!(guess.album.as_deref(), Some("Album Name"));
         assert_eq!(guess.artist.as_deref(), Some("Artist Name"));
+    }
+
+    #[test]
+    fn parses_a_bare_year() {
+        assert_eq!(parse_year("1991"), Some(1991));
+        assert_eq!(parse_year("  1991 "), Some(1991));
+    }
+
+    #[test]
+    fn parses_the_year_out_of_a_full_date() {
+        // The "Year" key routinely holds a whole date; only the leading year is wanted.
+        assert_eq!(parse_year("1991-08-12"), Some(1991));
+        assert_eq!(parse_year("1991-08-12T00:00:00Z"), Some(1991));
+        assert_eq!(parse_year("2003/05/01"), Some(2003));
+    }
+
+    #[test]
+    fn rejects_values_that_are_not_a_four_digit_year() {
+        assert_eq!(parse_year(""), None);
+        assert_eq!(parse_year("91"), None);
+        assert_eq!(parse_year("199"), None);
+        assert_eq!(parse_year("unknown"), None);
+        // Five leading digits is not a year, and must not silently truncate to four.
+        assert_eq!(parse_year("19910"), None);
     }
 
     #[test]

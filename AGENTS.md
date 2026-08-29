@@ -49,11 +49,33 @@ src/
                 walk_audio_files (shared by scan and stats)
   stats.rs    : read-only coverage census (`lyrics stats`); never constructs an http::Client
   lrc.rs      : LRC parsing and lint checks (`lyrics lint`); never constructs an http::Client
+  ebook/      : EPUB generation (`lyrics ebook`); never constructs an http::Client
+    mod.rs      : orchestration (collect -> render -> write) and the run Summary
+    library.rs  : directory tree -> book model (artists > albums > discs > tracks), reusing
+                  runner::walk_audio_files and meta::resolve so it agrees with scan
+    lyrics.rs   : sidecar contents -> display stanzas, folding over lrc::parse_line to strip
+                  timestamps and metadata tags rather than parsing LRC a second time
+    cover.rs    : album-art thumbnails, the cover collage, and the title plate rasterized
+                  into it (the `image` and `ab_glyph` crates)
+    render.rs   : book model -> XHTML/CSS/OPF/nav; one document per song, which is what
+                  guarantees a lyric never shares a page with the previous one
+    epub.rs     : the ZIP container (the `zip` crate); mimetype first and stored, per spec
 tests/
   read_only_guarantee.rs  : integration test asserting audio files are unchanged after a run
-  no_write_commands.rs    : integration test asserting stats/lint never write or delete
+  no_write_commands.rs    : integration test asserting stats/lint/ebook never write or delete
+  epub_validity.rs        : integration test running epubcheck over a generated book; skips
+                            (and passes) when epubcheck is not installed
   fixtures/sample.flac    : small tagged fixture (regenerate with the ffmpeg command below)
+assets/
+  Lora-Regular.ttf        : the cover title's typeface, embedded via include_bytes! in
+                            ebook/cover.rs; SIL Open Font License 1.1
+  Lora-OFL.txt            : that font's license, which must ship alongside it
 ```
+
+The cover title is drawn into the cover JPEG rather than written as HTML over it. This is not a
+style preference: reading systems re-theme CSS, and Apple Books in night mode discards a
+`background-color` outright and substitutes its own text color, which left the title unreadable
+on the artwork. No reader re-themes an image. Do not "simplify" this back to a CSS overlay.
 
 Where a change belongs: CLI surface goes in `cli.rs`. Persistent config loading goes in
 `config.rs`; how it's merged with CLI flags goes in `cli.rs`'s `SharedOptions::resolve`, not
@@ -61,9 +83,12 @@ in `config.rs`. Metadata resolution goes in `meta.rs`. Adding a new LRCLIB-API-c
 provider is one match arm in `ProviderKind::spec()` in `provider.rs`. Talking to a provider
 (throttling, retries, request shape) goes in `http.rs`. What file gets written where, or what
 state a sidecar is already in, goes in `sidecar.rs`. The decision of what to do with a track
-goes in `runner.rs`. `stats` and `lint` are read-only, offline commands: neither should ever
-construct an `http::Client` or call a `sidecar::write_*` function. A provider whose response
-shape isn't LRCLIB-compatible doesn't fit this seam.
+goes in `runner.rs`. Building the book goes in `ebook/`. `stats`, `lint`, and `ebook` are
+read-only, offline commands: none of them should ever construct an `http::Client` or call a
+`sidecar::write_*` function. `ebook` writes exactly one file, the book, at the path the user
+named — putting lyrics *in that file* is not a breach of invariant 3, which is about the
+standard streams. A provider whose response shape isn't LRCLIB-compatible doesn't fit this
+seam.
 
 ## Commands
 
@@ -92,7 +117,8 @@ make clean         # cargo clean
 
 - Unit tests (in `#[cfg(test)] mod tests` at the bottom of each module) run offline,
   against fixtures. No network calls in `cargo test`, ever.
-- `tests/read_only_guarantee.rs` is the one integration test; it depends on the crate
+- `tests/read_only_guarantee.rs` and `tests/no_write_commands.rs` are the integration tests;
+  they depend on the crate
   as a library (`src/lib.rs`), not on `#[path]` includes. Keep new integration tests
   the same way.
 - Regenerate the fixture, if needed, with:
@@ -105,6 +131,11 @@ make clean         # cargo clean
 
 - Live calls against a real provider API are for manual verification only. Never wire
   a live network call into `cargo test`.
+- `tests/epub_validity.rs` shells out to `epubcheck` to validate a generated book against the
+  EPUB 3 spec. It is optional by design: not every machine or CI runner has a JVM, so the test
+  reports a skip and passes when `epubcheck` isn't on `PATH`. Install it with
+  `brew install epubcheck` to have it actually run. This is not a network call — `epubcheck`
+  works offline against a local file.
 
 ## Style
 

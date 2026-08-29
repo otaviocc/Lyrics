@@ -47,6 +47,7 @@ lyrics track "~/Music/Metallica/...And Justice for All/04 One.flac"    # a singl
 lyrics show "One" --artist "Metallica"                                 # no audio file needed
 lyrics stats ~/Music                                                   # coverage census, read-only
 lyrics lint "~/Music/Metallica/...And Justice for All/04 One.lrc"      # check a sidecar's sync format
+lyrics ebook ~/Music -o Lyrics.epub                                    # bind your lyrics into a book
 ```
 
 `show` looks up lyrics by artist and track name (no audio file required) and displays them in a
@@ -70,6 +71,32 @@ fill the gaps in from `Artist/Album/NN Title.ext`-style paths instead of skippin
 Titles with a version marker, like `Machine Gun Man (Acoustic) [Bonus Track]` or
 `The Wizard [Live]`, are handled automatically: if the exact title comes up empty, `lyrics`
 retries with the marker stripped.
+
+## Reading your library
+
+**`lyrics ebook <dir>`** builds an EPUB out of the lyrics already sitting beside your music.
+It makes no network requests: it reads tags and existing sidecars, and nothing else. Fetch
+first with `scan`, then bind the result into a book.
+
+The book is organized the way a shelf is. Each artist is a chapter, grouped by the album-artist
+tag so compilations stay together; each album is a subchapter opening with its `folder.jpg` and
+its full tracklist, split into `CD 1` / `CD 2` sections for multi-disc releases. Every track on
+an album is listed, whether or not it has lyrics — the ones that do are links to their page. The
+cover is a collage of art from across your library. Each song's lyrics get a page of their own,
+with the timestamps stripped out.
+
+```sh
+lyrics ebook ~/Music -o Lyrics.epub
+lyrics ebook ~/Music --title "My Collection" --author "Me" -v
+```
+
+Tracks with no sidecar are still listed on their album, but get no page. An album no track of
+which has lyrics is left out entirely, as is an artist left with nothing.
+
+The output is a standard EPUB 3, validated against the spec with
+[epubcheck](https://www.w3.org/publishing/epubcheck/), and it opens in Apple Books, Kobo,
+Calibre, and anything else that reads EPUB. The cover's title is drawn into the image itself, so
+it survives a reader's night mode instead of being restyled out of legibility.
 
 ## Checking your library
 
@@ -111,11 +138,18 @@ Network
 Config file
   --config <PATH>           Load config from this path instead of the default location
   --no-config               Ignore the config file; use only built-in defaults and CLI flags
+
+Ebook (`lyrics ebook` only)
+  -o, --output <PATH>       Where to write the book  [default: ./Lyrics.epub]
+  --title <STR>             Book title, shown on the cover  [default: Lyrics]
+  --author <STR>            Book author, written to the EPUB metadata
+  -v, --verbose             Log each album as it is added
+  -q, --quiet               Only print the final summary
 ```
 
-Run `lyrics scan --help` or `lyrics track --help` for the full, always up-to-date list. These
-apply to `scan`, `track`, and `show`; `stats` and `lint` are read-only and take no network or
-selection options.
+Run `lyrics scan --help` or `lyrics track --help` for the full, always up-to-date list. The
+first four groups apply to `scan`, `track`, and `show`; `stats`, `lint`, and `ebook` are
+read-only and take no network or selection options.
 
 ## Configuration
 
@@ -168,6 +202,11 @@ Both providers are free services run by volunteers. `lyrics` identifies itself, 
 sequential with a short delay between them, and backs off properly if it's ever rate-limited. If
 this tool saves you time, consider supporting [LRCLIB](https://lrclib.net) or
 [lrcmux](https://lrcmux.dev).
+
+## Credits
+
+The cover title is set in [Lora](https://fonts.google.com/specimen/Lora), used under the SIL
+Open Font License 1.1. The font and its license are bundled in `assets/`.
 
 ## License
 

@@ -69,6 +69,31 @@ pub enum Command {
         #[arg(short, long)]
         quiet: bool,
     },
+    /// Build an EPUB of your library's lyrics. Read-only: makes no network requests.
+    Ebook {
+        /// Root directory to walk recursively.
+        dir: PathBuf,
+
+        /// Destination path for the generated book. [default: ./Lyrics.epub]
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Book title, shown on the cover. [default: Lyrics]
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Book author, written to the EPUB's metadata. [default: Various Artists]
+        #[arg(long)]
+        author: Option<String>,
+
+        /// Print per-album detail.
+        #[arg(short, long, action = clap::ArgAction::Count, conflicts_with = "quiet")]
+        verbose: u8,
+
+        /// Print only the final summary line.
+        #[arg(short, long, conflicts_with = "verbose")]
+        quiet: bool,
+    },
     /// Look up lyrics by artist/track name and display them in a pager.
     Show {
         /// Track name to look up.
