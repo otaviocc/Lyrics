@@ -4,7 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/otaviocc/Lyrics)](https://github.com/otaviocc/Lyrics/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/lyrics-sidecar.svg)](https://crates.io/crates/lyrics-sidecar)
 [![license](https://img.shields.io/crates/l/lyrics-sidecar.svg)](https://github.com/otaviocc/Lyrics/blob/main/LICENSE)
-[![homebrew](https://img.shields.io/badge/homebrew-lyrics-blue.svg)](https://github.com/otaviocc/homebrew-tap)
+[![homebrew](https://img.shields.io/badge/homebrew-lyrics-blue.svg)](https://github.com/otaviocc/homebrew-apps)
 
 Never search for lyrics again. Point `lyrics` at your music library and it drops a `.lrc` or
 `.txt` file next to every track, pulled from [LRCLIB](https://lrclib.net) or
@@ -19,7 +19,7 @@ to them.
 ### Homebrew
 
 ```sh
-brew install otaviocc/tap/lyrics
+brew install otaviocc/apps/lyrics
 ```
 
 ### Cargo
