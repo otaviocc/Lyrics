@@ -41,12 +41,12 @@ Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 ## Quick start
 
 ```sh
-lyrics scan ~/Music                                           # your whole library
-lyrics scan "~/Music/Radiohead"                               # just one artist or album
-lyrics track "~/Music/Radiohead/OK Computer/01 Airbag.flac"   # a single file
-lyrics show "Airbag" --artist "Radiohead"                     # no audio file needed
-lyrics stats ~/Music                                          # coverage census, read-only
-lyrics lint "~/Music/Radiohead/OK Computer/01 Airbag.lrc"     # check a sidecar's sync format
+lyrics scan ~/Music                                                    # your whole library
+lyrics scan "~/Music/Metallica"                                        # just one artist or album
+lyrics track "~/Music/Metallica/...And Justice for All/04 One.flac"    # a single file
+lyrics show "One" --artist "Metallica"                                 # no audio file needed
+lyrics stats ~/Music                                                   # coverage census, read-only
+lyrics lint "~/Music/Metallica/...And Justice for All/04 One.lrc"      # check a sidecar's sync format
 ```
 
 `show` looks up lyrics by artist and track name (no audio file required) and displays them in a
