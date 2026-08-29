@@ -288,6 +288,11 @@ pub fn lookup_lyrics(
         artist: artist.to_owned(),
         album: album.map(str::to_owned),
         duration: None,
+        // `show` looks a track up by name; none of the album-level tag fields exist for it.
+        album_artist: None,
+        track_number: None,
+        disc_number: None,
+        year: None,
         guessed: vec![],
     };
     lookup(client, &meta, opts)

@@ -10,6 +10,7 @@ use clap::Parser;
 
 use lyrics::cli::{Cli, Command, Options, SharedOptions};
 use lyrics::config::{self, Config};
+use lyrics::ebook::{self, BookOptions};
 use lyrics::http::{Client, ClientConfig};
 use lyrics::lrc::{self, Severity};
 use lyrics::{runner, stats};
@@ -178,6 +179,32 @@ fn run(cli: Cli) -> Result<bool> {
             strict,
             quiet,
         } => Ok(run_lint(&paths, strict, quiet)),
+        Command::Ebook {
+            dir,
+            output,
+            title,
+            author,
+            verbose,
+            quiet,
+        } => {
+            if !dir.is_dir() {
+                anyhow::bail!("{} is not a directory", dir.display());
+            }
+            // Defaults land here rather than in `SharedOptions::resolve`: that function is the
+            // one place *config file* precedence is defined, and `ebook` has no config surface.
+            let output = output.unwrap_or_else(|| PathBuf::from(ebook::DEFAULT_OUTPUT));
+            let options = BookOptions {
+                title: title.unwrap_or_else(|| ebook::DEFAULT_TITLE.to_owned()),
+                author: author.unwrap_or_else(|| ebook::DEFAULT_AUTHOR.to_owned()),
+                verbose,
+                quiet,
+            };
+            let summary = ebook::build(&dir, &output, &options)?;
+            if !quiet {
+                println!("{}", summary.line());
+            }
+            Ok(true)
+        }
         Command::Show {
             track,
             artist,
