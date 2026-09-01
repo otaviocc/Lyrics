@@ -1,15 +1,9 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Verification step 3 (plan): audio files must never be modified. This test drives the real
-//! tag-reading path (`meta::resolve`, which is what `process_track` calls before ever touching
-//! the network) against a real tagged fixture file and asserts the file's length and mtime are
-//! byte-identical afterwards, and that nothing but a `.lrc`/`.txt` sidecar can appear next to
-//! it.
-//!
-//! This deliberately does not invoke the network client. It isolates the read path, which is
-//! the one capable of touching the audio file at all. Sidecar-writing is covered independently
-//! by the write_* tests in src/sidecar.rs, all of which write only to `.lrc`/`.txt` paths.
+//! Asserts that `meta::resolve` never modifies the audio file (length, mtime, and no extra
+//! sidecar files appear). Sidecar-writing is covered by the `write_*` tests in
+//! `src/sidecar.rs`.
 
 use std::fs;
 use std::path::Path;
