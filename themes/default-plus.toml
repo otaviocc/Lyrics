@@ -1,0 +1,36 @@
+# Default+ — https://github.com/otaviocc/default-plus, generated from that
+# repo's palette.yaml, whose own source is an Xcode Font & Color Theme. A flat
+# near-black #171717 ground with saturated accents, rather than the tinted
+# near-blacks most dark themes use.
+#
+# The slot each color fills follows Default+'s own semantic roles. Two are
+# worth naming. `accent` is the color Xcode gives a declaration, which is the
+# accent the rest of these dotfiles use; Default+ comes from an editor theme
+# and so declares no single accent the way Catppuccin parameterizes one.
+# `chrome` is the teal Xcode gives the identifiers you declare. No element
+# defaults to `chrome`, so it is the theme's second accent, there for a reader
+# who points an element at it.
+#
+# The three diagnostics come from Xcode's scrollbar markers and debugger
+# prompt, not from the syntax colors that happen to be red and green: in
+# Default+ green is the *comment* color and red is the *string* color, so
+# reusing them would make a failed tool call the same red as a string literal.
+# Upstream role names are in the comments.
+name = "default-plus"
+
+[palette]
+background           = "#171717"   # base.background
+foreground           = "#FFFFFF"   # syntax.plain
+muted                = "#4C4C4C"   # base.invisibles, the grey of borders
+muted_text           = "#8E8E8E"   # base.muted_text
+subtle               = "#242424"   # base.subtle
+cursor               = "#26262C"   # current_line flattened, a step off the band
+selection_background = "#515B70"   # base.selection_background, Xcode's own
+selection_foreground = "#FFFFFF"   # syntax.plain
+error                = "#F74A4A"   # status.error
+success              = "#41B645"   # status.success
+warning              = "#EFB759"   # status.warning
+accent               = "#35B0D8"   # syntax.declaration
+chrome               = "#56D0B3"   # syntax.project_identifier
+highlight            = "#4FA5FF"   # syntax.url
+notice               = "#AB64FF"   # syntax.system_member

@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! LRC parsing and linting: `lyrics lint <path>...`.
+//! LRC parsing: line-level classification (`parse_line`), `lyrics lint <path>...`'s
+//! diagnostics, and `parse_synced`.
+//!
+//! `parse_synced` folds `parse_line` into the timeline `lyrics tui` plays, the same way
+//! `lint` folds it into diagnostics — nothing here parses LRC a second way.
 //!
 //! This is the crate's first real LRC parser; previously the only LRC-syntax awareness was
 //! `sidecar::is_timestamp_line`, a shallow prefix check used purely to decide synced-vs-plain.
@@ -9,11 +13,12 @@
 //! and multi-stamp lines), but `sidecar::is_timestamp_line` is left as-is: it is a proven,
 //! narrowly-scoped function backed by its own tests, and this module has no need to touch it.
 //!
-//! Read-only, like `stats`: `lint` never writes a file and never queries a provider.
+//! Read-only, like `stats`: this module never writes a file and never queries a provider.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use anyhow::{Result, bail};
 use walkdir::WalkDir;
 
 /// Metadata keys recognized by the LRC format (case-insensitive). `offset` gets its own
@@ -357,6 +362,90 @@ pub fn lint(contents: &str) -> Vec<Diagnostic> {
     diags
 }
 
+/// One lyric line, already placed on the track's timeline: `parse_synced` has folded its
+/// stamps, applied `[offset:]`, and sorted it into place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncedLine {
+    pub at_ms: u64,
+    /// Empty for a break entry (see [`Line::Timed`]).
+    pub text: String,
+}
+
+/// A fully parsed, timeline-ordered `.lrc` file, as `tui` consumes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Synced {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub lines: Vec<SyncedLine>,
+}
+
+/// Apply an `[offset:ms]` tag to a millisecond position. Per the LRC convention a *positive*
+/// offset means the tagged timestamps run early and should be pushed later to compensate, so
+/// it is subtracted; negative offsets add. Saturates at 0 rather than wrapping.
+const fn apply_offset(at_ms: u64, offset_ms: i64) -> u64 {
+    if offset_ms >= 0 {
+        at_ms.saturating_sub(offset_ms.unsigned_abs())
+    } else {
+        at_ms.saturating_add(offset_ms.unsigned_abs())
+    }
+}
+
+/// Parse `contents` (an `.lrc` file's text) into a timeline `tui` can walk.
+///
+/// Folds over [`parse_line`] rather than parsing LRC a second time, the same approach
+/// `ebook::lyrics::to_stanzas` takes. A line with several leading stamps becomes one entry per
+/// stamp. `Untimed` and `Malformed` lines are ignored: this is a player, not a linter, and
+/// `lyrics lint` is the place format problems get reported.
+///
+/// # Errors
+///
+/// Returns an error if the file has no timed lines at all once offset and stamps are applied.
+pub fn parse_synced(contents: &str) -> Result<Synced> {
+    let mut title = None;
+    let mut artist = None;
+    let mut offset_ms: i64 = 0;
+    let mut lines = Vec::new();
+
+    for raw_line in contents.lines() {
+        match parse_line(raw_line) {
+            Line::Metadata { key, value } => {
+                if key.eq_ignore_ascii_case("ti") {
+                    title = Some(value.to_owned());
+                } else if key.eq_ignore_ascii_case("ar") {
+                    artist = Some(value.to_owned());
+                } else if key.eq_ignore_ascii_case("offset")
+                    && let Ok(parsed) = value.parse::<i64>()
+                {
+                    offset_ms = parsed;
+                }
+            }
+            Line::Timed { stamps, text } => {
+                let text = text.trim();
+                for stamp in &stamps {
+                    if let Some(millis) = stamp.millis() {
+                        lines.push(SyncedLine {
+                            at_ms: apply_offset(u64::from(millis), offset_ms),
+                            text: text.to_owned(),
+                        });
+                    }
+                }
+            }
+            Line::Blank | Line::Comment(_) | Line::Untimed(_) | Line::Malformed(_) => {}
+        }
+    }
+
+    if lines.is_empty() {
+        bail!("no synced lyrics: file has no timed lines");
+    }
+
+    lines.sort_by_key(|line| line.at_ms);
+    Ok(Synced {
+        title,
+        artist,
+        lines,
+    })
+}
+
 /// Does `path` have an `.lrc` extension (case-insensitive)?
 fn is_lrc_file(path: &Path) -> bool {
     crate::meta::has_extension(path, &["lrc"])
@@ -597,5 +686,61 @@ mod tests {
         let (files, skipped) = resolve_lrc_paths(std::slice::from_ref(&txt));
         assert!(files.is_empty());
         assert_eq!(skipped, vec![txt]);
+    }
+
+    #[test]
+    fn parse_synced_sorts_multi_stamp_lines_into_the_timeline() {
+        let synced = parse_synced(
+            "[ti:Some Title]\n[ar:Some Artist]\n\
+             [00:05.00][01:00.00]Repeated\n[00:01.00]First\n",
+        )
+        .unwrap();
+        assert_eq!(synced.title.as_deref(), Some("Some Title"));
+        assert_eq!(synced.artist.as_deref(), Some("Some Artist"));
+        let at: Vec<u64> = synced.lines.iter().map(|line| line.at_ms).collect();
+        assert_eq!(at, vec![1_000, 5_000, 60_000]);
+    }
+
+    #[test]
+    fn parse_synced_applies_a_positive_offset_by_pushing_timestamps_later() {
+        // A positive offset means the tagged stamps run early on the actual recording, so a
+        // later effective time compensates.
+        let synced = parse_synced("[offset:500]\n[00:01.00]Hi\n").unwrap();
+        assert_eq!(synced.lines[0].at_ms, 500);
+    }
+
+    #[test]
+    fn parse_synced_applies_a_negative_offset_by_pulling_timestamps_earlier() {
+        let synced = parse_synced("[offset:-500]\n[00:01.00]Hi\n").unwrap();
+        assert_eq!(synced.lines[0].at_ms, 1_500);
+    }
+
+    #[test]
+    fn parse_synced_saturates_offset_at_zero_rather_than_underflowing() {
+        let synced = parse_synced("[offset:5000]\n[00:01.00]Hi\n").unwrap();
+        assert_eq!(synced.lines[0].at_ms, 0);
+    }
+
+    #[test]
+    fn parse_synced_keeps_break_entries_as_blank_lines() {
+        let synced = parse_synced("[00:01.00]Hi\n[00:02.00]\n").unwrap();
+        assert_eq!(synced.lines.len(), 2);
+        assert_eq!(synced.lines[1].text, "");
+    }
+
+    #[test]
+    fn parse_synced_ignores_untimed_and_malformed_lines() {
+        let synced = parse_synced("[00:01.00]Hi\nstray text\n[not a tag\n[00:02.00]Bye\n").unwrap();
+        assert_eq!(synced.lines.len(), 2);
+    }
+
+    #[test]
+    fn parse_synced_errors_on_plain_only_lyrics() {
+        assert!(parse_synced("just some plain text\nwith no timestamps\n").is_err());
+    }
+
+    #[test]
+    fn parse_synced_errors_on_empty_input() {
+        assert!(parse_synced("").is_err());
     }
 }

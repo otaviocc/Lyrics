@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: MIT
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 use lyrics::cli::{Cli, Command, Options, SharedOptions};
 use lyrics::config::{self, Config};
 use lyrics::ebook::{self, BookOptions};
-use lyrics::http::{Client, ClientConfig};
+use lyrics::http::{Client, ClientConfig, LyricsRecord};
 use lyrics::lrc::{self, Severity};
+use lyrics::theme;
+use lyrics::tui::{self, app::Song};
 use lyrics::{runner, stats};
 
 fn main() -> ExitCode {
@@ -39,23 +41,27 @@ fn main() -> ExitCode {
 /// at an *explicit* `--config <path>` is an error: the user named that path on purpose, so
 /// silently falling back to defaults would mask a typo instead of reporting it.
 fn resolve_options(raw: &SharedOptions) -> Result<Options> {
-    let config = if raw.no_config {
-        Config::default()
-    } else {
-        match raw.config.as_deref() {
-            Some(path) => {
-                if !path.exists() {
-                    anyhow::bail!("config file not found: {}", path.display());
-                }
-                config::load(path)?
+    Ok(raw.resolve(&load_config(raw)?))
+}
+
+/// The config-loading half of `resolve_options`, split out so `Command::Tui` can read
+/// `[tui]` (which `SharedOptions::resolve` has no reason to know about) alongside the usual
+/// network options.
+fn load_config(raw: &SharedOptions) -> Result<Config> {
+    if raw.no_config {
+        return Ok(Config::default());
+    }
+    match raw.config.as_deref() {
+        Some(path) => {
+            if !path.exists() {
+                anyhow::bail!("config file not found: {}", path.display());
             }
-            None => match config::default_path() {
-                Some(path) => config::load(&path)?,
-                None => Config::default(),
-            },
+            config::load(path)
         }
-    };
-    Ok(raw.resolve(&config))
+        None => {
+            config::default_path().map_or_else(|| Ok(Config::default()), |path| config::load(&path))
+        }
+    }
 }
 
 /// Build an HTTP client from the resolved options.
@@ -67,6 +73,19 @@ fn client_for(opts: &Options) -> Client {
         max_retries: opts.max_retries,
         verbosity: opts.verbose,
     })
+}
+
+/// Build a client from already-resolved `options` and look up a lyrics record by name. The
+/// "resolve options, build a client, look up" sequence `run_show` and `run_tui`'s fetch path
+/// both need; each keeps its own record -> output handling.
+fn fetch_lyrics(
+    track: &str,
+    artist: &str,
+    album: Option<&str>,
+    options: &Options,
+) -> Result<Option<LyricsRecord>> {
+    let mut client = client_for(options);
+    runner::lookup_lyrics(&mut client, track, artist, album, options)
 }
 
 /// Check every resolved `.lrc` file and print diagnostics. Returns `Ok(false)` (exit 1) when
@@ -126,6 +145,82 @@ fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
     total_errors == 0 && !(strict && total_warnings > 0)
 }
 
+/// `Command::Scan`. Returns `Ok(false)` only when every track in the walk errored.
+fn run_scan(dir: &Path, options: &SharedOptions) -> Result<bool> {
+    if !dir.is_dir() {
+        anyhow::bail!("{} is not a directory", dir.display());
+    }
+    let options = resolve_options(options)?;
+    let mut client = client_for(&options);
+    let summary = runner::scan(&mut client, dir, &options)?;
+    if !options.quiet {
+        println!("{}", summary.line());
+    }
+    let total_processed = summary
+        .synced
+        .saturating_add(summary.upgraded)
+        .saturating_add(summary.plain)
+        .saturating_add(summary.instrumental)
+        .saturating_add(summary.skipped)
+        .saturating_add(summary.missing)
+        .saturating_add(summary.untagged);
+    let all_failed = summary.errors > 0 && total_processed == 0;
+    Ok(!all_failed)
+}
+
+/// `Command::Ebook`.
+fn run_ebook(
+    dir: &Path,
+    output: Option<PathBuf>,
+    title: Option<String>,
+    author: Option<String>,
+    verbose: u8,
+    quiet: bool,
+) -> Result<bool> {
+    if !dir.is_dir() {
+        anyhow::bail!("{} is not a directory", dir.display());
+    }
+    // Defaults land here rather than in `SharedOptions::resolve`: that function is the one
+    // place *config file* precedence is defined, and `ebook` has no config surface.
+    let output = output.unwrap_or_else(|| PathBuf::from(ebook::DEFAULT_OUTPUT));
+    let options = BookOptions {
+        title: title.unwrap_or_else(|| ebook::DEFAULT_TITLE.to_owned()),
+        author: author.unwrap_or_else(|| ebook::DEFAULT_AUTHOR.to_owned()),
+        verbose,
+        quiet,
+    };
+    let summary = ebook::build(dir, &output, &options)?;
+    if !quiet {
+        println!("{}", summary.line());
+    }
+    Ok(true)
+}
+
+/// `Command::Show`.
+fn run_show(
+    track: &str,
+    artist: &str,
+    album: Option<&str>,
+    options: &SharedOptions,
+) -> Result<bool> {
+    let options = resolve_options(options)?;
+    let record = fetch_lyrics(track, artist, album, &options)?;
+    match record {
+        Some(rec) => {
+            let text = rec
+                .synced_lyrics
+                .as_deref()
+                .or(rec.plain_lyrics.as_deref())
+                .unwrap_or("");
+            runner::print_lyrics(text, !options.no_color)?;
+        }
+        None => {
+            eprintln!("No lyrics found for \"{track}\" by {artist}");
+        }
+    }
+    Ok(true)
+}
+
 /// Returns `Ok(true)` on overall success, `Ok(false)` if the run completed but every track
 /// errored (see plan §4 exit-code rule).
 fn run(cli: Cli) -> Result<bool> {
@@ -139,27 +234,7 @@ fn run(cli: Cli) -> Result<bool> {
             }
             Ok(true)
         }
-        Command::Scan { dir, options } => {
-            if !dir.is_dir() {
-                anyhow::bail!("{} is not a directory", dir.display());
-            }
-            let options = resolve_options(&options)?;
-            let mut client = client_for(&options);
-            let summary = runner::scan(&mut client, &dir, &options)?;
-            if !options.quiet {
-                println!("{}", summary.line());
-            }
-            let total_processed = summary
-                .synced
-                .saturating_add(summary.upgraded)
-                .saturating_add(summary.plain)
-                .saturating_add(summary.instrumental)
-                .saturating_add(summary.skipped)
-                .saturating_add(summary.missing)
-                .saturating_add(summary.untagged);
-            let all_failed = summary.errors > 0 && total_processed == 0;
-            Ok(!all_failed)
-        }
+        Command::Scan { dir, options } => run_scan(&dir, &options),
         Command::Stats { dir, verbose } => {
             if !dir.is_dir() {
                 anyhow::bail!("{} is not a directory", dir.display());
@@ -186,49 +261,110 @@ fn run(cli: Cli) -> Result<bool> {
             author,
             verbose,
             quiet,
-        } => {
-            if !dir.is_dir() {
-                anyhow::bail!("{} is not a directory", dir.display());
-            }
-            // Defaults land here rather than in `SharedOptions::resolve`: that function is the
-            // one place *config file* precedence is defined, and `ebook` has no config surface.
-            let output = output.unwrap_or_else(|| PathBuf::from(ebook::DEFAULT_OUTPUT));
-            let options = BookOptions {
-                title: title.unwrap_or_else(|| ebook::DEFAULT_TITLE.to_owned()),
-                author: author.unwrap_or_else(|| ebook::DEFAULT_AUTHOR.to_owned()),
-                verbose,
-                quiet,
-            };
-            let summary = ebook::build(&dir, &output, &options)?;
-            if !quiet {
-                println!("{}", summary.line());
-            }
-            Ok(true)
-        }
+        } => run_ebook(&dir, output, title, author, verbose, quiet),
         Command::Show {
             track,
             artist,
             album,
             options,
-        } => {
-            let options = resolve_options(&options)?;
-            let mut client = client_for(&options);
-            let record =
-                runner::lookup_lyrics(&mut client, &track, &artist, album.as_deref(), &options)?;
-            match record {
-                Some(rec) => {
-                    let text = rec
-                        .synced_lyrics
-                        .as_deref()
-                        .or(rec.plain_lyrics.as_deref())
-                        .unwrap_or("");
-                    runner::print_lyrics(text, !options.no_color)?;
-                }
-                None => {
-                    eprintln!("No lyrics found for \"{track}\" by {artist}");
-                }
-            }
-            Ok(true)
-        }
+        } => run_show(&track, &artist, album.as_deref(), &options),
+        Command::Tui {
+            track,
+            artist,
+            album,
+            file,
+            counter,
+            theme,
+            list_themes,
+            options,
+        } => run_tui(&TuiArgs {
+            track,
+            artist,
+            album,
+            file,
+            counter,
+            theme,
+            list_themes,
+            options,
+        }),
     }
+}
+
+/// `Command::Tui`'s fields, gathered into a struct so `run_tui` reads as one call rather than
+/// eight positional arguments, and so `run`'s match arm stays one line.
+struct TuiArgs {
+    track: Option<String>,
+    artist: Option<String>,
+    album: Option<String>,
+    file: Option<PathBuf>,
+    counter: bool,
+    theme: Option<String>,
+    list_themes: bool,
+    options: SharedOptions,
+}
+
+/// `lyrics tui`. Fetches (or reads, with `--file`) a synced lyric file, parses its timeline,
+/// and hands it to `tui::run` to display. `--file` never constructs an `http::Client`, keeping
+/// that path offline like `stats`/`lint`/`ebook`.
+fn run_tui(args: &TuiArgs) -> Result<bool> {
+    let config = load_config(&args.options)?;
+    let config_dir = config::config_dir();
+    let theme_name = args.theme.as_deref().or(config.tui.theme.as_deref());
+
+    if args.list_themes {
+        print!("{}", theme::loader::list(config_dir.as_deref()));
+        return Ok(true);
+    }
+
+    let loaded = theme::loader::load(None, theme_name, config_dir.as_deref())?;
+    for warning in &loaded.warnings {
+        eprintln!("lyrics: {warning}");
+    }
+
+    let song = if let Some(path) = &args.file {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let lrc::Synced {
+            title,
+            artist,
+            lines,
+        } = lrc::parse_synced(&contents)?;
+        let title = title.unwrap_or_else(|| {
+            path.file_stem().map_or_else(
+                || path.display().to_string(),
+                |stem| stem.to_string_lossy().into_owned(),
+            )
+        });
+        Song {
+            title,
+            artist,
+            lines,
+        }
+    } else {
+        let Some(track) = args.track.clone() else {
+            anyhow::bail!("a track name is required unless --file or --list-themes is given");
+        };
+        let Some(artist) = args.artist.clone() else {
+            anyhow::bail!("--artist is required alongside a track name");
+        };
+        // `config` was already loaded above (to read `[tui].theme`); resolving straight
+        // against it avoids `resolve_options`' own `load_config` re-reading the same file.
+        let options = args.options.resolve(&config);
+        let record = fetch_lyrics(&track, &artist, args.album.as_deref(), &options)?;
+        let Some(record) = record else {
+            anyhow::bail!("no lyrics found for \"{track}\" by {artist}");
+        };
+        let Some(text) = record.synced_lyrics.filter(|_| !record.instrumental) else {
+            anyhow::bail!("no synced lyrics for \"{track}\" by {artist}");
+        };
+        let synced = lrc::parse_synced(&text)?;
+        Song {
+            title: track,
+            artist: Some(artist),
+            lines: synced.lines,
+        }
+    };
+
+    tui::run(song, loaded.theme, args.counter)?;
+    Ok(true)
 }

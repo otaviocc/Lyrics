@@ -28,6 +28,15 @@ pub struct Config {
     pub lrclib: ProviderConfig,
     #[serde(default)]
     pub lrcmux: ProviderConfig,
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// The `[tui]` table: persistent preferences for `lyrics tui`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TuiConfig {
+    pub theme: Option<String>,
 }
 
 /// The `[options]` table. Every field is optional: an absent key means "use the built-in
@@ -73,6 +82,15 @@ pub fn default_path() -> Option<PathBuf> {
             .join("lyrics")
             .join("config.toml"),
     )
+}
+
+/// `$XDG_CONFIG_HOME/lyrics`, falling back to `$HOME/.config/lyrics`.
+///
+/// The directory `config.toml` lives in, and where `tui`'s user themes (`themes/*.toml`) and
+/// `theme.toml` live too. `None` under the same conditions as `default_path`.
+#[must_use]
+pub fn config_dir() -> Option<PathBuf> {
+    default_path()?.parent().map(Path::to_path_buf)
 }
 
 /// Load and parse `path`.

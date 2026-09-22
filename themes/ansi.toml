@@ -1,0 +1,22 @@
+# ansi — the merge base every other theme inherits from.
+#
+# It is deliberately empty. The defaults live in Rust, in `impl Default for
+# Palette` and `default_style()` in src/theme/, so that a partial user theme and
+# this file mean the same thing: everything not stated falls through to what the
+# terminal already chose. Writing the defaults out here would be a second copy
+# to keep in step, and the first one to drift.
+#
+# Asserting nothing is also what makes this the right base for a light terminal
+# and a dark one alike: `background` and `foreground` stay at `reset`, so the
+# transcript sits on the reader's own ground rather than repainting it.
+#
+# To write your own, copy this file to ~/.config/lyrics/theme.toml and state
+# only what you want moved:
+#
+#     [palette]
+#     accent = "#89b4fa"
+#     notice = "#f5c2e7"
+#
+# The one key here is the name, which is identity rather than appearance: it is
+# what `--theme ansi` and `base = "ansi"` resolve to.
+name = "ansi"
