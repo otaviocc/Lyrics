@@ -5,6 +5,12 @@
 //! write into the music tree. These tests drive all three against small fixture trees and assert
 //! nothing changed, following the same pattern as `read_only_guarantee.rs` (link the `lyrics`
 //! lib crate, `tempfile::tempdir()`, snapshot before/after).
+//!
+//! `lyrics tui --file`/`--list-themes` are read-only the same way (see AGENTS.md's module map):
+//! `--file` never constructs an `http::Client`, and neither path ever writes. Their CLI wiring
+//! lives in `main.rs`, outside the lib crate these tests link against, so what's exercised here
+//! is the library-level pieces `main.rs`'s `Command::Tui` arm calls: `theme::loader::list` and
+//! `lrc::parse_synced` reading a `--file` target.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -12,7 +18,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use lyrics::ebook::{self, BookOptions};
-use lyrics::{lrc, stats};
+use lyrics::{lrc, stats, theme};
 
 #[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
 fn snapshot(dir: &Path) -> BTreeMap<std::path::PathBuf, (u64, SystemTime)> {
@@ -142,6 +148,28 @@ fn ebook_never_modifies_the_music_tree() {
         before_entry_count,
         "no file was created or deleted in the music tree"
     );
+}
+
+#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[test]
+fn tui_list_themes_and_file_lookup_never_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    build_fixture_tree(tmp.path());
+    let before = snapshot(tmp.path());
+
+    // `--list-themes`.
+    let listing = theme::loader::list(None);
+    assert!(!listing.built_in.is_empty());
+    let printed = listing.to_string();
+    assert!(printed.contains("stage"), "{printed}");
+
+    // `--file`, reading one of the fixture tree's own .lrc files.
+    let contents = fs::read_to_string(tmp.path().join("01 Synced.lrc")).unwrap();
+    let synced = lrc::parse_synced(&contents).expect("the fixture has timed lines");
+    assert_eq!(synced.lines.len(), 2);
+
+    let after = snapshot(tmp.path());
+    assert_eq!(before, after, "no file's length or mtime changed");
 }
 
 #[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.

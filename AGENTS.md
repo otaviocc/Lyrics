@@ -24,8 +24,11 @@ Instructions for any coding agent working in this repository.
    an identifying `User-Agent`. Do not add a `--jobs`/concurrency option, and do
    not add a fallback chain across providers within a run.
 
-3. **Never print lyrics content to stdout/stderr.** Log outcomes and paths
-   (`fetched <path>`), not lyric bodies.
+3. **Never print lyrics content to stdout/stderr as log output.** Log outcomes and paths
+   (`fetched <path>`), not lyric bodies. `tui` is the one command whose entire job is to
+   display lyrics: it draws them on the alternate screen (see `ratatui::try_init`/`restore` in
+   `src/tui/mod.rs`), leaves nothing in scrollback, and its own errors and notices never quote
+   lyric text.
 
 ## Module map
 
@@ -48,7 +51,8 @@ src/
   runner.rs   : per-track decision logic (process_track), the scan walk, and
                 walk_audio_files (shared by scan and stats)
   stats.rs    : read-only coverage census (`lyrics stats`); never constructs an http::Client
-  lrc.rs      : LRC parsing and lint checks (`lyrics lint`); never constructs an http::Client
+  lrc.rs      : LRC parsing: lint checks (`lyrics lint`) and parse_synced, the timeline
+                `lyrics tui` plays; never constructs an http::Client
   ebook/      : EPUB generation (`lyrics ebook`); never constructs an http::Client
     mod.rs      : orchestration (collect -> render -> write) and the run Summary
     library.rs  : directory tree -> book model (artists > albums > discs > tracks), reusing
@@ -60,6 +64,25 @@ src/
     render.rs   : book model -> XHTML/CSS/OPF/nav; one document per song, which is what
                   guarantees a lyric never shares a page with the previous one
     epub.rs     : the ZIP container (the `zip` crate); mimetype first and stored, per spec
+  theme/      : the TOML theme system `tui` draws with, adapted from the sibling `rewind`/
+                `vademecum` TUIs' theme module (same file format, palette slots, base
+                inheritance); never constructs an http::Client
+    mod.rs      : Theme (palette + per-Element styles)
+    palette.rs  : the 15 semantic color slots and their TOML shape (PaletteFile)
+    color.rs    : ColorSpec parsing (#rrggbb, ANSI names, palette-slot references)
+    elements.rs : the Element enum this app actually draws (CurrentLine, HeaderTitle, ...)
+                  and their default styles, derived from the palette
+    loader.rs   : bundled themes (include_str!), base-chain resolution, --list-themes
+  tui/        : `lyrics tui`, the synced-lyrics teleprompter; never constructs an
+                http::Client except through the same runner::lookup_lyrics path `show` uses
+    mod.rs      : terminal init/restore (ratatui::try_init/restore) and the event loop
+    clock.rs    : the listener-controlled playback clock (Space, seek keys); takes an
+                  explicit Instant everywhere so it's deterministic under test
+    app.rs      : App/Mode state and the Action -> state transitions
+    input.rs    : KeyEvent -> Action
+    view.rs     : the frame: header/rules/status chrome plus the centered lyric content
+    bigtext.rs  : the --counter countdown's block-glyph digits
+    help.rs     : the `?` key table overlay
 tests/
   read_only_guarantee.rs  : integration test asserting audio files are unchanged after a run
   no_write_commands.rs    : integration test asserting stats/lint/ebook never write or delete
@@ -85,10 +108,12 @@ provider is one match arm in `ProviderKind::spec()` in `provider.rs`. Talking to
 state a sidecar is already in, goes in `sidecar.rs`. The decision of what to do with a track
 goes in `runner.rs`. Building the book goes in `ebook/`. `stats`, `lint`, and `ebook` are
 read-only, offline commands: none of them should ever construct an `http::Client` or call a
-`sidecar::write_*` function. `ebook` writes exactly one file, the book, at the path the user
-named — putting lyrics *in that file* is not a breach of invariant 3, which is about the
-standard streams. A provider whose response shape isn't LRCLIB-compatible doesn't fit this
-seam.
+`sidecar::write_*` function; `tui --file` follows the same rule (it reads the `.lrc` directly).
+`ebook` writes exactly one file, the book, at the path the user named — putting lyrics *in that
+file* is not a breach of invariant 3, which is about the standard streams; `tui` drawing lyrics
+on the alternate screen is the other named exception to that same invariant. A provider whose
+response shape isn't LRCLIB-compatible doesn't fit this seam. Theme parsing and the palette
+goes in `theme/`; the teleprompter's own state, input handling, and rendering goes in `tui/`.
 
 ## Commands
 
@@ -139,8 +164,11 @@ make clean         # cargo clean
 
 ## Style
 
-- `anyhow::Result` at fallible boundaries (`Client`, `process_track`, `main`); no
-  `unwrap()` outside tests.
+- `anyhow::Result` at fallible boundaries (`Client`, `process_track`, `main`, `tui::run`); no
+  `unwrap()` outside tests. `theme::loader::ThemeError` is `thiserror`-derived rather than
+  `anyhow`, since callers (a future `--list-themes`-style consumer, or a test) may want to
+  match on which problem it was; it converts into `anyhow::Error` at the `main.rs` boundary via
+  `?` like any other `std::error::Error`.
 - Keep comments load-bearing: explain *why*, especially around the invariants above.
 - Markdown line-length limit is 100 (see `.markdownlint-cli2.jsonc`).
 - Rust edition 2024, MSRV 1.89 (`Cargo.toml`).

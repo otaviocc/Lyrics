@@ -1,0 +1,19 @@
+# Gruvbox Dark — the medium hard contrast, upstream names in the comments.
+name = "gruvbox-dark"
+
+[palette]
+background           = "#282828"   # bg0
+foreground           = "#ebdbb2"   # fg1
+muted                = "#665c54"   # bg3
+muted_text           = "#a89984"   # fg4
+subtle               = "#32302f"   # bg0_s
+cursor               = "#3c3836"   # bg1
+selection_background = "#504945"   # bg2
+selection_foreground = "#fbf1c7"   # fg0
+error                = "#fb4934"   # bright red
+success              = "#b8bb26"   # bright green
+warning              = "#fabd2f"   # bright yellow
+accent               = "#fabd2f"   # bright yellow
+chrome               = "#8ec07c"   # bright aqua
+highlight            = "#83a598"   # bright blue
+notice               = "#d3869b"   # bright purple

@@ -110,6 +110,44 @@ pub enum Command {
         #[command(flatten)]
         options: SharedOptions,
     },
+    /// Follow along with synced lyrics: a full-screen teleprompter, current line centered.
+    Tui {
+        /// Track name to look up (omit this with --file or --list-themes).
+        #[arg(
+            required_unless_present_any = ["file", "list_themes"],
+            conflicts_with = "file",
+            requires = "artist"
+        )]
+        track: Option<String>,
+
+        /// Artist name. Required alongside a track name.
+        #[arg(long)]
+        artist: Option<String>,
+
+        /// Album name (optional, refines the search).
+        #[arg(long)]
+        album: Option<String>,
+
+        /// Read lyrics from a local .lrc (or .txt-in-LRC-syntax) file instead of fetching them.
+        /// Stays offline: no provider is queried.
+        #[arg(long, conflicts_with_all = ["track", "artist", "album"])]
+        file: Option<PathBuf>,
+
+        /// Show a 3, 2, 1, PLAY countdown before the clock starts running.
+        #[arg(long)]
+        counter: bool,
+
+        /// Theme to use: a bundled name, or one from ~/.config/lyrics/themes/. [default: stage]
+        #[arg(long)]
+        theme: Option<String>,
+
+        /// List built-in and user themes, then exit.
+        #[arg(long)]
+        list_themes: bool,
+
+        #[command(flatten)]
+        options: SharedOptions,
+    },
 }
 
 /// Raw CLI layer of the options shared by the `track`, `scan`, and `show` subcommands.
@@ -276,13 +314,14 @@ pub struct Options {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Options as ConfigOptions, ProviderConfig};
+    use crate::config::{Options as ConfigOptions, ProviderConfig, TuiConfig};
 
     fn config_with(options: ConfigOptions) -> Config {
         Config {
             options,
             lrclib: ProviderConfig::default(),
             lrcmux: ProviderConfig::default(),
+            tui: TuiConfig::default(),
         }
     }
 

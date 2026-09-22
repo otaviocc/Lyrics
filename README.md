@@ -45,6 +45,7 @@ lyrics scan ~/Music                                                    # your wh
 lyrics scan "~/Music/Metallica"                                        # just one artist or album
 lyrics track "~/Music/Metallica/...And Justice for All/04 One.flac"    # a single file
 lyrics show "One" --artist "Metallica"                                 # no audio file needed
+lyrics tui "One" --artist "Metallica" --counter                        # follow along, teleprompter-style
 lyrics stats ~/Music                                                   # coverage census, read-only
 lyrics lint "~/Music/Metallica/...And Justice for All/04 One.lrc"      # check a sidecar's sync format
 lyrics ebook ~/Music -o Lyrics.epub                                    # bind your lyrics into a book
@@ -71,6 +72,60 @@ fill the gaps in from `Artist/Album/NN Title.ext`-style paths instead of skippin
 Titles with a version marker, like `Machine Gun Man (Acoustic) [Bonus Track]` or
 `The Wizard [Live]`, are handled automatically: if the exact title comes up empty, `lyrics`
 retries with the marker stripped.
+
+## Following along
+
+**`lyrics tui`** is a full-screen teleprompter: the current lyric line stays centered on
+screen, earlier lines scroll up above it, and later lines wait below.
+
+```sh
+lyrics tui "One" --artist "Metallica" --counter   # fetch, then 3, 2, 1, PLAY
+lyrics tui --file "~/Music/Metallica/...And Justice for All/04 One.lrc"
+```
+
+Without `--file`, `tui` looks the track up the same way `show` does (`--artist` is required,
+`--album` optionally narrows the match) and needs synced lyrics — a plain-only or instrumental
+result is an error. With `--file`, it reads that `.lrc` straight from disk and never makes a
+network request.
+
+The clock is yours to drive, not tied to anything external: it starts paused at `00:00`, and
+you press Space at the same moment you hit play in your music player. `--counter` shows a
+`3, 2, 1, PLAY` countdown first, so you can time that press exactly, and starts the clock the
+instant `PLAY` appears.
+
+| Key | Does |
+| --- | --- |
+| `Space` | play / pause |
+| `←`/`h`, `→`/`l` | seek 5s back / forward |
+| `Shift-←`/`H`, `Shift-→`/`L` | seek 10s back / forward |
+| `↑`/`k`, `↓`/`j` | jump to the previous / next line |
+| `,` / `.` | nudge the clock ∓0.1s, for fine sync |
+| `0` / `r` | restart at `00:00`, paused |
+| `c` | replay the countdown |
+| `?` | show every key |
+| `q` / `Esc` / `Ctrl-c` | quit |
+
+`tui` draws lyrics on the alternate screen for you to follow along with — its whole job is to
+display them, unlike every other command, which never prints lyric bodies to stdout/stderr.
+
+### Themes
+
+`tui` ships the same bundled TOML themes as [rewind](https://github.com/otaviocc/rewind) and
+[vademecum](https://github.com/otaviocc/vademecum): `stage` (the default), `ansi`,
+`catppuccin-latte`, `catppuccin-mocha`, `default-plus`, `gruvbox-dark`, `gruvbox-light`,
+`kanagawa-dragon`, `nord`, `solarized-dark`, `solarized-light`, `tokyo-night`,
+`tokyo-night-day`, and `vesper`.
+
+```sh
+lyrics tui --list-themes            # every built-in, plus any of your own
+lyrics tui "One" --artist "Metallica" --theme nord
+```
+
+Pick a default in `config.toml` (see [Configuration](#configuration)), or write your own at
+`~/.config/lyrics/theme.toml` — or under a name, at
+`~/.config/lyrics/themes/<name>.toml`, to select with `--theme <name>`. A theme file only needs
+to state what it wants to change; anything left unset falls through to the built-in default.
+See any bundled theme in [`themes/`](themes/) for the full format.
 
 ## Reading your library
 
@@ -148,8 +203,10 @@ Ebook (`lyrics ebook` only)
 ```
 
 Run `lyrics scan --help` or `lyrics track --help` for the full, always up-to-date list. The
-first four groups apply to `scan`, `track`, and `show`; `stats`, `lint`, and `ebook` are
-read-only and take no network or selection options.
+first four groups apply to `scan`, `track`, `show`, and `tui` (when it's fetching); `stats`,
+`lint`, and `ebook` are read-only and take no network or selection options, and neither does
+`tui --file`. `tui` additionally takes `--file`, `--counter`, `--theme`, and `--list-themes`;
+see [Following along](#following-along).
 
 ## Configuration
 
@@ -167,13 +224,17 @@ keep_plain = true
 
 [lrclib]
 user_agent = "MyPrivateLyricsBot/1.0"
+
+[tui]
+theme = "nord"
 ```
 
 Every value option (`provider`, `delay_ms`, `max_retries`, `duration_tolerance`,
 `user_agent`) and boolean flag (`path_fallback`, `keep_plain`, `no_search_fallback`,
 `no_marker_fallback`, `no_color`) under `[options]` is supported. `[lrclib]`/`[lrcmux]` accept
 a provider-specific `user_agent` that overrides `[options].user_agent` when that provider is
-selected.
+selected. `[tui].theme` sets `tui`'s default theme; `--theme` on the command line overrides it
+for that run.
 
 `force`, `dry_run`, `verbose`, and `quiet` are **not** configurable — a config that silently
 forces every run to re-fetch, silently makes every run a no-op, or fights with itself over

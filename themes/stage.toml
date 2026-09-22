@@ -1,0 +1,27 @@
+# Stage — the default theme, written for `lyrics tui` rather than borrowed from an editor.
+#
+# `background` and `foreground` stay `reset`, so the teleprompter sits on whatever terminal
+# ground the listener already has, the same reasoning spool/handbook use in the sibling apps.
+#
+# The one decision that matters here is `accent`: the current line is the whole point of the
+# screen, so it gets a color that reads clearly against both a light and a dark terminal
+# without assuming which. Everything else fades: `muted`/`muted_text` carry the lines above and
+# below center, so the eye is pulled to the middle without the rest of the screen going blank.
+name = "stage"
+
+[palette]
+background            = "reset"
+foreground            = "reset"
+muted                 = "#5f6672"
+muted_text            = "#8a90a0"
+subtle                = "#2a2e37"
+cursor                = "#2a2e37"
+selection_background  = "#3a4152"
+selection_foreground  = "#e8ecf2"
+error                 = "#e08a7e"
+success               = "#a3c586"
+warning               = "#e8b969"
+accent                = "#f2a65a"
+chrome                = "#f2a65a"
+highlight             = "#6fb3d2"
+notice                = "#e8b969"
