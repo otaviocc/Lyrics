@@ -1,19 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! LRC parsing: line-level classification (`parse_line`), `lyrics lint <path>...`'s
-//! diagnostics, and `parse_synced`.
-//!
-//! `parse_synced` folds `parse_line` into the timeline `lyrics tui` plays, the same way
-//! `lint` folds it into diagnostics — nothing here parses LRC a second way.
-//!
-//! This is the crate's first real LRC parser; previously the only LRC-syntax awareness was
-//! `sidecar::is_timestamp_line`, a shallow prefix check used purely to decide synced-vs-plain.
-//! `parse_line` here is a superset of that check (it also classifies metadata tags, comments,
-//! and multi-stamp lines), but `sidecar::is_timestamp_line` is left as-is: it is a proven,
-//! narrowly-scoped function backed by its own tests, and this module has no need to touch it.
-//!
-//! Read-only, like `stats`: this module never writes a file and never queries a provider.
+//! LRC parsing: the checks `lyrics lint` runs and the timeline `lyrics tui` plays.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -21,13 +9,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use walkdir::WalkDir;
 
-/// Metadata keys recognized by the LRC format (case-insensitive). `offset` gets its own
-/// value-format check in `lint`; the rest are free-form.
 const KNOWN_METADATA_KEYS: &[&str] = &[
     "ti", "ar", "al", "au", "by", "length", "offset", "re", "ve", "tool",
 ];
 
-/// How serious a `Diagnostic` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -35,7 +20,6 @@ pub enum Severity {
 }
 
 impl Severity {
-    /// Human-readable label used in diagnostic output.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -45,11 +29,8 @@ impl Severity {
     }
 }
 
-/// A single problem found in an `.lrc` file. Never carries lyric text (invariant 3, see
-/// `AGENTS.md`) — only positions, tags, and structural descriptions.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    /// 1-indexed source line. `0` for a file-level diagnostic not tied to one line.
     pub line: usize,
     pub severity: Severity,
     pub message: String,
@@ -73,26 +54,16 @@ impl Diagnostic {
     }
 }
 
-/// A parsed LRC timestamp tag, e.g. `[01:23.45]`, kept in its as-written form (digit counts)
-/// as well as its numeric value, so `lint` can flag non-canonical formatting separately from
-/// out-of-range values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp {
     pub mins: u32,
     pub secs: u32,
-    /// Numeric value of the fractional part, e.g. `45` for `.45`. `0` when absent.
     pub frac: u32,
-    /// Number of digits in the fractional part, `0` when absent.
     pub frac_digits: u8,
-    /// Number of digits used to write the minutes field.
     pub min_digits: u8,
 }
 
 impl Timestamp {
-    /// Total milliseconds since the start of the track, computed straight from the parsed
-    /// digits. Deliberately does not clamp `secs` to the canonical 0..60 range — flagging an
-    /// out-of-range value is `lint`'s job, not this function's job to silently paper over.
-    /// Returns `None` on overflow (an absurdly large minutes field).
     #[must_use]
     pub fn millis(&self) -> Option<u32> {
         let frac_ms = match self.frac_digits {
@@ -111,33 +82,22 @@ impl Timestamp {
     }
 }
 
-/// One classified line of an `.lrc` file, as returned by `parse_line`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line<'a> {
     Blank,
-    /// A `# ...` comment line.
     Comment(&'a str),
-    /// A single `[key:value]` tag, e.g. `[ar:Some Artist]`.
     Metadata {
         key: &'a str,
         value: &'a str,
     },
-    /// One or more leading timestamp tags followed by the lyric text.
     Timed {
         stamps: Vec<Timestamp>,
-        /// Everything after the last timestamp tag. Blank (or whitespace-only) makes this a
-        /// *break entry* rather than a lyric: a marker telling a player when to stop
-        /// displaying the previous line. LRCLIB ends most of its synced records with one.
         text: &'a str,
     },
-    /// Non-blank text with no leading `[` at all.
     Untimed(&'a str),
-    /// Starts with `[` but isn't a valid timestamp or metadata tag.
     Malformed(&'a str),
 }
 
-/// Parse a `key:value` tag body into a metadata tag, if `key` looks like a metadata key
-/// (letters only) rather than the digit run a timestamp would start with.
 fn parse_metadata(tag: &str) -> Option<(&str, &str)> {
     let (key, value) = tag.split_once(':')?;
     let key = key.trim();
@@ -147,9 +107,6 @@ fn parse_metadata(tag: &str) -> Option<(&str, &str)> {
     Some((key, value.trim()))
 }
 
-/// Parse a bracket tag body as a timestamp: `MM:SS`, `MM:SS.x`, `MM:SS.xx`, or `MM:SS.xxx`
-/// (and looser digit counts on every field — `lint` flags non-canonical forms, this function
-/// only rejects what isn't a timestamp shape at all).
 fn parse_timestamp(tag: &str) -> Option<Timestamp> {
     let (mins_str, rest) = tag.split_once(':')?;
     if mins_str.is_empty() || !mins_str.chars().all(|c| c.is_ascii_digit()) {
@@ -184,9 +141,8 @@ fn parse_timestamp(tag: &str) -> Option<Timestamp> {
     })
 }
 
-/// Classify a single line of an `.lrc` file.
 #[must_use]
-#[allow(clippy::string_slice)] // `close` comes from `find(']')` on ASCII brackets: always a char boundary.
+#[allow(clippy::string_slice)]
 pub fn parse_line(line: &str) -> Line<'_> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -225,13 +181,6 @@ pub fn parse_line(line: &str) -> Line<'_> {
     Line::Timed { stamps, text: rest }
 }
 
-/// Check `contents` (an `.lrc` file's text) and return every problem found.
-///
-/// Diagnostics come back in line order, most-relevant first within each line.
-///
-/// Break entries (see [`Line::Timed`]'s `text`) are exempt from the duplicate-timestamp
-/// check, and are not recorded as seen either: sharing a timestamp with the line they
-/// terminate is exactly what they are for, so neither direction is a duplicate.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn lint(contents: &str) -> Vec<Diagnostic> {
@@ -362,16 +311,12 @@ pub fn lint(contents: &str) -> Vec<Diagnostic> {
     diags
 }
 
-/// One lyric line, already placed on the track's timeline: `parse_synced` has folded its
-/// stamps, applied `[offset:]`, and sorted it into place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncedLine {
     pub at_ms: u64,
-    /// Empty for a break entry (see [`Line::Timed`]).
     pub text: String,
 }
 
-/// A fully parsed, timeline-ordered `.lrc` file, as `tui` consumes it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Synced {
     pub title: Option<String>,
@@ -379,9 +324,6 @@ pub struct Synced {
     pub lines: Vec<SyncedLine>,
 }
 
-/// Apply an `[offset:ms]` tag to a millisecond position. Per the LRC convention a *positive*
-/// offset means the tagged timestamps run early and should be pushed later to compensate, so
-/// it is subtracted; negative offsets add. Saturates at 0 rather than wrapping.
 const fn apply_offset(at_ms: u64, offset_ms: i64) -> u64 {
     if offset_ms >= 0 {
         at_ms.saturating_sub(offset_ms.unsigned_abs())
@@ -390,16 +332,6 @@ const fn apply_offset(at_ms: u64, offset_ms: i64) -> u64 {
     }
 }
 
-/// Parse `contents` (an `.lrc` file's text) into a timeline `tui` can walk.
-///
-/// Folds over [`parse_line`] rather than parsing LRC a second time, the same approach
-/// `ebook::lyrics::to_stanzas` takes. A line with several leading stamps becomes one entry per
-/// stamp. `Untimed` and `Malformed` lines are ignored: this is a player, not a linter, and
-/// `lyrics lint` is the place format problems get reported.
-///
-/// # Errors
-///
-/// Returns an error if the file has no timed lines at all once offset and stamps are applied.
 pub fn parse_synced(contents: &str) -> Result<Synced> {
     let mut title = None;
     let mut artist = None;
@@ -446,16 +378,10 @@ pub fn parse_synced(contents: &str) -> Result<Synced> {
     })
 }
 
-/// Does `path` have an `.lrc` extension (case-insensitive)?
 fn is_lrc_file(path: &Path) -> bool {
     crate::meta::has_extension(path, &["lrc"])
 }
 
-/// Resolve `lyrics lint`'s path arguments into a sorted, deduplicated list of `.lrc` files.
-///
-/// A directory is walked recursively for `.lrc` files; a file argument is included directly
-/// if it has an `.lrc` extension, otherwise it's returned in the second list so the caller
-/// can report it as skipped rather than silently ignoring it.
 #[must_use]
 pub fn resolve_lrc_paths(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut files = BTreeSet::new();
@@ -587,17 +513,12 @@ mod tests {
         );
     }
 
-    /// A timed line with blank text is an LRC break entry, not a lyric: it marks when the
-    /// previous line should stop being displayed. Sharing a timestamp with a real line is
-    /// legitimate, so it must not be reported as a duplicate.
     #[test]
     fn break_entry_sharing_a_timestamp_is_not_a_duplicate() {
         let diags = lint("[00:01.00]A\n[00:01.00]\n");
         assert!(diags.is_empty(), "{diags:?}");
     }
 
-    /// The other half of the fix: a break entry must not be *recorded* either, or the real
-    /// lyric line that follows it at the same timestamp gets flagged instead.
     #[test]
     fn break_entry_does_not_poison_a_later_real_line() {
         let diags = lint("[00:01.00]\n[00:01.00]A\n");
@@ -607,8 +528,6 @@ mod tests {
         );
     }
 
-    /// The shape LRCLIB actually returns, and what prompted the fix: lyric lines followed by
-    /// a trailing break entry at the same timestamp as the last one.
     #[test]
     fn realistic_lrclib_tail_lints_clean() {
         let contents = "[04:43.70]There's gonna be Hell\n                         [04:51.97]There's gonna be Hell.\n                         [04:51.97]\n";
@@ -680,7 +599,7 @@ mod tests {
         let (files, skipped) = resolve_lrc_paths(&[dir.path().to_path_buf()]);
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("a.lrc"));
-        assert!(skipped.is_empty()); // directory walk silently skips non-.lrc, no report needed
+        assert!(skipped.is_empty());
 
         let txt = dir.path().join("notes.txt");
         let (files, skipped) = resolve_lrc_paths(std::slice::from_ref(&txt));
@@ -703,8 +622,6 @@ mod tests {
 
     #[test]
     fn parse_synced_applies_a_positive_offset_by_pushing_timestamps_later() {
-        // A positive offset means the tagged stamps run early on the actual recording, so a
-        // later effective time compensates.
         let synced = parse_synced("[offset:500]\n[00:01.00]Hi\n").unwrap();
         assert_eq!(synced.lines[0].at_ms, 500);
     }

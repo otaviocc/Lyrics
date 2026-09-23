@@ -1,13 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Painting one frame: header, hairline rules, the centered lyric, and the status bar.
-//!
-//! The layout is the same five-row shape the sibling TUIs (`rewind`, `vademecum`) use: a
-//! 1-row header, a hairline rule, the content, another hairline rule, and a 1-row status bar.
-//! What's different here is the content row: instead of a scrolling list, the current lyric
-//! line's vertical middle is pinned to the content area's center row every frame, with earlier
-//! lines stacked above it and later lines below — a teleprompter, not a pager.
+//! Painting one frame: header, rules, the centered lyric, and the status bar.
 
 use std::time::Duration;
 
@@ -24,18 +18,13 @@ use crate::tui::app::{App, Mode};
 use crate::tui::{bigtext, help};
 
 const HINTS: &str = "? keys";
-/// The fine-sync keys, kept on the status bar (not only behind `?`) because lining the clock
-/// up is the thing a listener does most while a song plays.
 const SYNC_HINTS: &str = ", . ±0.1s · < > ±0.5s · Enter sync";
 const HINT_GAP: usize = 2;
 const EDGE_PAD: u16 = 1;
 const SEPARATOR: &str = " · ";
 const ELIDED: &str = "…";
-/// Padding, in cells, between the lyric text and either edge of the content area.
 const CONTENT_PAD: u16 = 2;
 const BREAK_GLYPH: &str = "♪";
-/// How many rows past the screen's edge to keep generating context lines for — cheap
-/// insurance against a resize between deadline math and drawing.
 const SLACK_ROWS: usize = 4;
 
 pub fn draw(frame: &mut Frame, app: &App, elapsed: Duration) {
@@ -59,8 +48,6 @@ impl Widget for Screen<'_> {
         let [header_row, top_rule, content_rows, bottom_rule, status_row] =
             Layout::vertical(rows).areas(area);
 
-        // Computed once and threaded through: `content()` and `statusbar()` both need "which
-        // line is current right now", and it's the same answer for both on a given frame.
         let current_index = self.app.current_index(self.elapsed);
         let break_remaining = self.app.break_remaining(self.elapsed);
 
@@ -90,7 +77,6 @@ fn row_at(area: Rect, buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style
     );
 }
 
-/// `row_at` at `area.y`, for the single-row areas (header, rules, status bar).
 fn row(area: Rect, buf: &mut Buffer, x: u16, text: &str, style: Style) {
     row_at(area, buf, x, area.y, text, style);
 }
@@ -156,8 +142,6 @@ fn header(area: Rect, buf: &mut Buffer, app: &App) {
     }
 }
 
-/// Drop segments from the front (replacing them with `…`) until what remains fits in `room`
-/// columns. Falls back to truncating the last segment alone if even that doesn't fit.
 fn elide(segments: &[String], room: usize) -> Vec<String> {
     let width_of = |pieces: &[String]| {
         pieces
@@ -186,8 +170,6 @@ fn elide(segments: &[String], room: usize) -> Vec<String> {
         .map_or_else(Vec::new, |last| vec![truncate(last, room)])
 }
 
-/// Truncate `text` to `width` columns, replacing the tail with `…` if it was cut. Character-
-/// based (never byte slicing) so it can't land inside a multi-byte codepoint.
 fn truncate(text: &str, width: usize) -> String {
     if text.width() <= width {
         return text.to_owned();
@@ -217,9 +199,6 @@ fn rule(area: Rect, buf: &mut Buffer, style: Style) {
     );
 }
 
-/// Paints the leading portion of the top rule in `ScrollProgress`, proportional to how far
-/// into the song the clock is. The denominator is the last line's timestamp plus a few
-/// seconds' grace, so the bar reaches full only once the last line has had time to be read.
 fn progress(area: Rect, buf: &mut Buffer, app: &App, elapsed: Duration) {
     if area.height == 0 || app.song.lines.is_empty() {
         return;
@@ -247,10 +226,6 @@ fn progress(area: Rect, buf: &mut Buffer, app: &App, elapsed: Duration) {
     }
 }
 
-/// Greedy word-wrap of `text` into rows no wider than `width` columns. Never splits a word
-/// unless the word alone is wider than `width`, in which case it's cut a character at a time
-/// (never byte-sliced) so it can't land inside a multi-byte codepoint. `width == 0` returns the
-/// text as a single unwrapped row rather than looping forever.
 fn wrap(text: &str, width: usize) -> Vec<String> {
     if text.is_empty() {
         return vec![String::new()];
@@ -287,7 +262,6 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             current.push_str(word);
             current_width = word_width;
         } else {
-            // A single word wider than the whole line: hard-wrap it by character.
             for ch in word.chars() {
                 let ch_width = ch.to_string().width();
                 if current_width.saturating_add(ch_width) > width && !current.is_empty() {
@@ -320,7 +294,6 @@ fn style_for(theme: &crate::theme::Theme, distance: Distance) -> Style {
     }
 }
 
-/// Text to show for line `index`: `♪` for a break entry (blank timed line), else its lyric.
 fn display_text(app: &App, index: usize) -> String {
     app.song
         .lines
@@ -354,9 +327,6 @@ fn content(
     let width = usize::from(area.width.saturating_sub(CONTENT_PAD.saturating_mul(2)));
     let half = usize::from(area.height).saturating_div(2);
 
-    // In a long enough break the timer rides on the `♪` row itself: the current row is where
-    // the eye already is, and a bare `0:12` next to the note needs no words to read as "until
-    // the singing resumes".
     let current_wrapped = match (break_remaining, current_index) {
         (Some(left), _) => vec![format!("{BREAK_GLYPH} {}", format_remaining(left))],
         (None, None) => vec![BREAK_GLYPH.to_owned()],
@@ -364,15 +334,10 @@ fn content(
     };
     let current_mid = current_wrapped.len().saturating_sub(1).saturating_div(2);
 
-    // Above: walk earlier lines until enough rows are built to cover from the center row up
-    // to (and a little past) the top of the content area.
     let mut above: Vec<(String, Distance)> = Vec::new();
     let mut rows_above = current_mid;
     let mut cursor = current_index;
     let mut steps_up = 0usize;
-    // Before the first line (`cursor` is `None`) nothing has been sung yet, so nothing goes
-    // above the `♪`: line 0 is the first line *below* it, and drawing it here too would show it
-    // twice.
     while rows_above < half.saturating_add(SLACK_ROWS) {
         let Some(index) = cursor.and_then(|i| i.checked_sub(1)) else {
             break;
@@ -477,8 +442,6 @@ fn countdown(area: Rect, buf: &mut Buffer, app: &App, step: u8) {
             return;
         }
     }
-    // The terminal is too small for the block font (or the label had no glyphs): fall back to
-    // plain centered text.
     let y = area.y.saturating_add(area.height.saturating_div(2));
     draw_centered_row(area, buf, y, label, style);
 }
@@ -515,8 +478,6 @@ fn statusbar(
         text
     };
 
-    // Dropped whole rather than truncated when the terminal is too narrow, like `HINTS` in
-    // the header: half a hint is worse than none.
     let hints_width = SYNC_HINTS.width();
     if text
         .width()
@@ -537,8 +498,6 @@ fn statusbar(
     }
 }
 
-/// `0:12`, rounded *up*: the counter reads `0:01` through the last second and the line
-/// arrives as it would tick to `0:00`, the way a countdown to an event should.
 fn format_remaining(left: Duration) -> String {
     let millis = left.as_millis();
     let secs = millis.saturating_add(999).saturating_div(1_000);
@@ -650,8 +609,6 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        // Content rows are y=2..=8 (header, rule, content x7, rule, status) for a height-11
-        // screen: 1+1+7+1+1 = 11. The content area's center row is y=2+3=5.
         let expected_center = 5u16;
         let mut found_at = None;
         for y in 2..9 {
@@ -788,7 +745,6 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
 
-        // Center row of the content area is y=5 (see the centering test above).
         assert!(
             row_text(buffer, 5).contains(&format!("{BREAK_GLYPH} 0:11")),
             "{:?}",

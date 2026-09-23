@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! The window behind `?`: every key, grouped by what it is for.
+//! The `?` overlay: every key, grouped by purpose.
 
 use ratatui::layout::Size;
 use ratatui::text::{Line, Span};
@@ -109,7 +109,6 @@ mod tests {
     #[test]
     fn a_tall_enough_screen_shows_every_row_without_clipping() {
         let rows = u16::try_from(lines(&Theme::default()).len()).unwrap();
-        // Plus the top and bottom border.
         assert!(
             rows.saturating_add(2) <= MAX_HEIGHT,
             "{rows} rows no longer fit MAX_HEIGHT"

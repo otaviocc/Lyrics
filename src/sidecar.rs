@@ -2,24 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 //! Sidecar path derivation, on-disk state detection, and writes.
-//!
-//! `sidecar_path` is the *only* place in this crate that builds a path to write to (read-only
-//! guarantee, see AGENTS.md), and it always replaces the audio file's extension, so it can
-//! never return the input path unchanged. The only `fs::remove_file` call in the crate lives
-//! here too, and it only ever removes a `.txt` sidecar. The extension itself encodes sidecar
-//! state: `.lrc` means synced (including the instrumental marker); `.txt` means plain.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Instrumental marker written as a `.lrc` with a real timestamp.
-///
-/// `sidecar_state()` reads it back as `Synced`, so an instrumental track is then skipped on
-/// future runs exactly like a genuinely synced one, instead of costing a request every time.
 pub const INSTRUMENTAL_MARKER: &str = "[00:00.00]Instrumental\n";
 
-/// On-disk state of a track's sidecar lyrics file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarState {
     Synced,
@@ -27,12 +16,6 @@ pub enum SidecarState {
     None,
 }
 
-/// Finer-grained on-disk state than [`SidecarState`]: splits out the instrumental marker.
-///
-/// Used by `stats`, which wants to report instrumental tracks separately; `scan`/
-/// `process_track` keep using [`SidecarState`] unchanged, since treating a marked-instrumental
-/// track exactly like a genuinely synced one (no repeat request) is the entire point of how
-/// the marker is written. See `sidecar_state`, which is now a lossy view over this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidecarDetail {
     Synced,
@@ -41,10 +24,6 @@ pub enum SidecarDetail {
     None,
 }
 
-/// Build the sidecar path for `audio_path` with the given extension ("lrc" or "txt").
-///
-/// Debug-asserts that the result is never equal to the input. This is the structural
-/// enforcement of the "never touch the audio file" invariant.
 #[must_use]
 pub fn sidecar_path(audio_path: &Path, extension: &str) -> PathBuf {
     let path = audio_path.with_extension(extension);
@@ -55,20 +34,15 @@ pub fn sidecar_path(audio_path: &Path, extension: &str) -> PathBuf {
     path
 }
 
-/// Sidecar path with the `.lrc` extension.
 fn lrc_path(audio_path: &Path) -> PathBuf {
     sidecar_path(audio_path, "lrc")
 }
 
-/// Sidecar path with the `.txt` extension.
 fn txt_path(audio_path: &Path) -> PathBuf {
     sidecar_path(audio_path, "txt")
 }
 
-/// Does `line` look like an LRC timestamp tag, e.g. `[00:17.12]`?
-/// Metadata tags such as `[ar:Artist Name]` are deliberately excluded: after the leading digit
-/// run there must be a colon then more digits, not an arbitrary letter.
-#[allow(clippy::string_slice)] // `close` from `find(']')` is always at a char boundary.
+#[allow(clippy::string_slice)]
 fn is_timestamp_line(line: &str) -> bool {
     let line = line.trim_start();
     let Some(rest) = line.strip_prefix('[') else {
@@ -90,7 +64,6 @@ fn is_timestamp_line(line: &str) -> bool {
             .all(|c| c.is_ascii_digit())
 }
 
-/// Detect whether an audio file has a synced `.lrc`, a plain `.txt`, or no sidecar at all.
 #[must_use]
 pub fn sidecar_state(audio_path: &Path) -> SidecarState {
     match sidecar_detail(audio_path) {
@@ -100,8 +73,6 @@ pub fn sidecar_state(audio_path: &Path) -> SidecarState {
     }
 }
 
-/// Detect whether an audio file has a synced `.lrc` (further split into a genuine sync vs.
-/// the instrumental marker), a plain `.txt`, or no sidecar at all.
 #[must_use]
 pub fn sidecar_detail(audio_path: &Path) -> SidecarDetail {
     let lrc = lrc_path(audio_path);
@@ -124,7 +95,6 @@ pub fn sidecar_detail(audio_path: &Path) -> SidecarDetail {
     SidecarDetail::None
 }
 
-/// Write `contents` to `path` atomically via a temp file and rename.
 fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -136,7 +106,6 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     fs::rename(&tmp_path, path)
 }
 
-/// Ensure the lyrics string ends with a trailing newline.
 fn normalize(mut contents: String) -> String {
     if !contents.ends_with('\n') {
         contents.push('\n');
@@ -144,12 +113,6 @@ fn normalize(mut contents: String) -> String {
     contents
 }
 
-/// Write a synced `.lrc` sidecar. Unless `keep_plain`, removes a stale `.txt` sidecar, but
-/// only after the `.lrc` write has succeeded, so a failed write never loses the plain copy.
-///
-/// # Errors
-///
-/// Returns an error on I/O failure during the atomic write or stale-`.txt` removal.
 pub fn write_synced(audio_path: &Path, lyrics: &str, keep_plain: bool) -> io::Result<()> {
     write_atomic(&lrc_path(audio_path), &normalize(lyrics.to_string()))?;
     if !keep_plain {
@@ -162,21 +125,10 @@ pub fn write_synced(audio_path: &Path, lyrics: &str, keep_plain: bool) -> io::Re
     Ok(())
 }
 
-/// Write a plain-text `.txt` sidecar (no timestamps).
-///
-/// # Errors
-///
-/// Returns an error on I/O failure during the atomic write.
 pub fn write_plain(audio_path: &Path, lyrics: &str) -> io::Result<()> {
     write_atomic(&txt_path(audio_path), &normalize(lyrics.to_string()))
 }
 
-/// Write the instrumental marker as a `.lrc`, but only when no sidecar exists yet. Never
-/// clobbers a real lyrics file (plain or synced) with the marker.
-///
-/// # Errors
-///
-/// Returns an error on I/O failure during the atomic write.
 pub fn write_instrumental_marker_if_absent(audio_path: &Path) -> io::Result<bool> {
     if sidecar_state(audio_path) != SidecarState::None {
         return Ok(false);
@@ -238,8 +190,6 @@ mod tests {
 
     #[test]
     fn state_synced_when_instrumental_marker_present() {
-        // The marker is a real (fake-timestamp) .lrc, so a track already marked instrumental
-        // is skipped on future runs exactly like a genuinely synced one: no repeat request.
         let dir = tempdir().unwrap();
         let audio = audio(dir.path());
         fs::write(lrc_path(&audio), INSTRUMENTAL_MARKER).unwrap();
@@ -308,7 +258,6 @@ mod tests {
             fs::read_to_string(lrc_path(&audio)).unwrap(),
             INSTRUMENTAL_MARKER
         );
-        // And it must read back as Synced: the entire point of writing it this way.
         assert_eq!(sidecar_state(&audio), SidecarState::Synced);
     }
 }

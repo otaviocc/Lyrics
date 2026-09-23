@@ -38,6 +38,10 @@ tempfile = "3.13"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
+# The library target exists so `tests/` can reach the internals; it is not a published API,
+# and these lints only ask for rustdoc on one. Comments are against the house style (AGENTS.md).
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 nursery = { level = "deny", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 //! Lyrics-provider HTTP client, shared across every `ProviderKind`.
-//!
-//! Implements the politeness contract both known providers document: identify the client via
-//! User-Agent, throttle requests, and honor `Retry-After` on 429. LRCLIB at
-//! <https://lrclib.net/docs>, lrcmux at <https://lrcmux.dev/docs> (60 req/min, `Retry-After` on
-//! 429, `User-Agent` recommended). Uses blocking `ureq` deliberately, since both contracts
-//! require sequential requests, so async buys nothing.
 
 use std::fmt::Write as _;
 use std::thread;
@@ -25,7 +19,6 @@ const DEFAULT_USER_AGENT: &str = concat!(
     " (+https://github.com/otaviocc/Lyrics)"
 );
 
-/// A single lyrics record as returned by the LRCLIB-compatible API.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LyricsRecord {
@@ -42,7 +35,6 @@ pub struct LyricsRecord {
     pub synced_lyrics: Option<String>,
 }
 
-/// LRCLIB-style error envelope returned on non-retryable client errors.
 #[derive(Debug, Deserialize)]
 struct ErrorBody {
     #[allow(dead_code)]
@@ -51,7 +43,6 @@ struct ErrorBody {
     message: String,
 }
 
-/// Configuration for building an HTTP [`Client`].
 pub struct ClientConfig {
     pub provider: ProviderKind,
     pub user_agent: Option<String>,
@@ -60,11 +51,6 @@ pub struct ClientConfig {
     pub verbosity: u8,
 }
 
-/// Blocking HTTP client that talks to a lyrics provider.
-///
-/// Handles throttling, User-Agent identification, and automatic retry with exponential
-/// backoff on 429 and 5xx responses. Not async; the provider contracts require sequential
-/// requests, so async would add complexity for no benefit.
 pub struct Client {
     agent: ureq::Agent,
     spec: ProviderSpec,
@@ -76,7 +62,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a new client from the given configuration.
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         let agent = ureq::Agent::config_builder()
@@ -98,8 +83,6 @@ impl Client {
         }
     }
 
-    /// Sleep, if needed, so at least `self.delay` has elapsed since the previous request.
-    /// Centralized here so no call site can bypass the throttle.
     fn throttle(&mut self) {
         if let Some(last) = self.last_request {
             let elapsed = last.elapsed();
@@ -116,8 +99,6 @@ impl Client {
         }
     }
 
-    /// Issue a GET request with the throttle, User-Agent, and 429/5xx retry policy applied.
-    /// Returns `Ok(None)` for a 404 (not an error, just "no such record").
     fn get_json<T: serde::de::DeserializeOwned>(&mut self, url: &str) -> Result<Option<T>> {
         let mut attempt = 0u32;
         loop {
@@ -201,14 +182,6 @@ impl Client {
         }
     }
 
-    /// Look up a track by title, artist, and (optionally) album and duration.
-    ///
-    /// Returns `Ok(None)` when the provider has no matching record (HTTP 404).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure, non-retryable HTTP errors, or when the provider's
-    /// rate limit or server-error budget is exhausted.
     pub fn get(&mut self, meta: &TrackMeta) -> Result<Option<LyricsRecord>> {
         let mut url = format!(
             "{}?track_name={}&artist_name={}",
@@ -225,18 +198,6 @@ impl Client {
         self.get_json(&url)
     }
 
-    /// Deliberately does **not** send `album_name`, even though `meta.album` may be known.
-    /// LRCLIB filters `/api/search` results by `album_name` server-side, just as strictly as
-    /// `/api/get` does, so passing it here would make the "loose" fallback fail in lockstep
-    /// with the exact lookup on anything LRCLIB stores under a different album title (a
-    /// remaster, reissue, or regional release). `pick_best_candidate` already scores album
-    /// match as a client-side tiebreaker, which gets the same benefit without the false
-    /// negatives.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on network failure, non-retryable HTTP errors, or when the provider's
-    /// rate limit or server-error budget is exhausted.
     pub fn search(&mut self, meta: &TrackMeta) -> Result<Vec<LyricsRecord>> {
         let url = format!(
             "{}?track_name={}&artist_name={}",
@@ -248,11 +209,6 @@ impl Client {
     }
 }
 
-/// Parse a `Retry-After` header per RFC 9110.
-///
-/// Accepts either an integer number of seconds or an HTTP-date. Returns `None` when the
-/// header is absent or unparsable, in which case the caller falls back to exponential
-/// backoff.
 fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
     let value = headers.get("Retry-After")?.to_str().ok()?;
     if let Ok(seconds) = value.trim().parse::<u64>() {
@@ -263,7 +219,6 @@ fn retry_after(headers: &http::HeaderMap) -> Option<Duration> {
     target.duration_since(now).ok()
 }
 
-/// Percent-encode a string for use in a query parameter (application/x-www-form-urlencoded).
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -280,17 +235,8 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Pick the best `/api/search` candidate.
-///
-/// Rejects anything outside `tolerance` seconds of the local duration (when known), then
-/// prefers synced-available, then closest duration, then a matching album name.
-///
-/// # Panics
-///
-/// Panics if `duration_delta` returns `NaN` for a candidate, which cannot happen because all
-/// inputs are finite `f64` values derived from `u32` subtractions.
 #[must_use]
-#[allow(clippy::unwrap_used)] // Documented in `# Panics` above.
+#[allow(clippy::unwrap_used)]
 pub fn pick_best_candidate(
     candidates: &[LyricsRecord],
     local_duration: Option<u32>,
@@ -327,7 +273,6 @@ pub fn pick_best_candidate(
     survivors.first().map(|c| (*c).clone())
 }
 
-/// Format an LRCLIB error body for display in log output.
 fn describe_error(body: &ErrorBody) -> String {
     format!("{} ({}): {}", body.name, body.code, body.message)
 }
@@ -359,8 +304,8 @@ mod tests {
     #[test]
     fn prefers_synced_over_closer_duration_plain() {
         let candidates = vec![
-            record(Some(200.0), false, None), // exact duration match, plain only
-            record(Some(201.0), true, None),  // 1s off, synced
+            record(Some(200.0), false, None),
+            record(Some(201.0), true, None),
         ];
         let best = pick_best_candidate(&candidates, Some(200), None, 2).unwrap();
         assert!(best.synced_lyrics.is_some());

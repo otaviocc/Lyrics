@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Keys to actions. See `help.rs` for the table shown to the listener; a test there proves
-//! every key it advertises resolves here.
+//! Keys to actions.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -11,15 +10,12 @@ use crate::tui::app::Mode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     TogglePlay,
-    /// `true` for the short (5s) seek, `false` for the long (10s) one.
     SeekBackward(bool),
     SeekForward(bool),
     PreviousLine,
     NextLine,
-    /// `true` for the short (100ms) nudge, `false` for the long (500ms) one.
     NudgeEarlier(bool),
     NudgeLater(bool),
-    /// Snap the clock to the nearest line's timestamp, pressed as that line is sung.
     TapSync,
     Restart,
     ReplayCountdown,
@@ -27,11 +23,6 @@ pub enum Action {
     Quit,
 }
 
-/// Resolve one key press into an `Action`, given the mode it was pressed in.
-///
-/// `Help` only listens for the keys that close it; a countdown still accepts every key
-/// (`TogglePlay` cancels it — see `App::apply`), since sitting through an unskippable countdown
-/// to reach the quit key would be a poor way to leave a mistaken invocation.
 #[must_use]
 pub fn action(key: &KeyEvent, mode: Mode) -> Option<Action> {
     if mode == Mode::Help {
@@ -57,8 +48,6 @@ pub fn action(key: &KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Down | KeyCode::Char('j') => Some(Action::NextLine),
         KeyCode::Char(',') => Some(Action::NudgeEarlier(true)),
         KeyCode::Char('.') => Some(Action::NudgeLater(true)),
-        // Matched on the character alone: terminals disagree on whether `<`/`>` arrive with
-        // SHIFT set, and either way the listener pressed the same key.
         KeyCode::Char('<') => Some(Action::NudgeEarlier(false)),
         KeyCode::Char('>') => Some(Action::NudgeLater(false)),
         KeyCode::Enter => Some(Action::TapSync),

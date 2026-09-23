@@ -1,11 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Read-only coverage census for a directory tree: `lyrics stats <dir>`.
-//!
-//! Walks the tree exactly like `scan` (via `runner::walk_audio_files`) and calls
-//! `sidecar::sidecar_detail` per file, but never constructs an `http::Client` and never
-//! writes anything. Safe to run as often as you like; it makes no network requests.
+//! Read-only coverage census for a directory tree.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -16,7 +12,6 @@ use walkdir::WalkDir;
 use crate::meta;
 use crate::sidecar::{self, SidecarDetail};
 
-/// Coverage census of a directory tree, as counted by `collect`.
 #[derive(Debug, Default)]
 pub struct Stats {
     pub total: u32,
@@ -24,22 +19,18 @@ pub struct Stats {
     pub instrumental: u32,
     pub plain: u32,
     pub missing: u32,
-    /// Lowercased audio extension (no dot) -> count, e.g. `"flac" -> 800`.
     pub by_extension: BTreeMap<String, u32>,
-    /// `.lrc`/`.txt` sidecars with no same-stem audio file in the same directory.
     pub orphan_paths: Vec<PathBuf>,
 }
 
 impl Stats {
-    /// Number of orphaned sidecars found.
     #[must_use]
     pub fn orphan_count(&self) -> u32 {
         u32::try_from(self.orphan_paths.len()).unwrap_or(u32::MAX)
     }
 
-    /// Render the census as the human-readable block printed by `lyrics stats`.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)] // write! to a String is infallible.
+    #[allow(clippy::missing_panics_doc)]
     pub fn render(&self) -> String {
         let mut out = String::new();
         let _ = writeln!(out, "Total tracks: {:>8}", thousands(self.total));
@@ -80,24 +71,16 @@ impl Stats {
     }
 }
 
-/// Does `path` look like a lyrics sidecar (`.lrc` or `.txt`), case-insensitively?
 fn is_sidecar_file(path: &Path) -> bool {
     meta::has_extension(path, &["lrc", "txt"])
 }
 
-/// Bump the counter for `key` in `map` by one, saturating rather than overflowing.
 fn bump(map: &mut BTreeMap<String, u32>, key: String) {
     map.entry(key)
         .and_modify(|n| *n = n.saturating_add(1))
         .or_insert(1);
 }
 
-/// Walk `dir` and build a coverage census. Read-only: never writes, never queries a provider.
-///
-/// A single pass classifies each file as it's visited (audio vs. sidecar vs. neither), rather
-/// than walking the tree once per category, since on a large library the second traversal's
-/// I/O would roughly double `stats`'s cost for no benefit. Orphan matching lowercases every
-/// stem before comparing, so it stays case-insensitive without assuming the filesystem is.
 #[must_use]
 pub fn collect(dir: &Path) -> Stats {
     let mut stats = Stats::default();
@@ -160,8 +143,7 @@ pub fn collect(dir: &Path) -> Stats {
     stats
 }
 
-/// Render `n` with thousands separators, e.g. `1240 -> "1,240"`.
-#[allow(clippy::arithmetic_side_effects)] // Index math over a short digit string; can't overflow.
+#[allow(clippy::arithmetic_side_effects)]
 fn thousands(n: u32) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -174,9 +156,7 @@ fn thousands(n: u32) -> String {
     out.chars().rev().collect()
 }
 
-/// `count` as an integer percentage of `total`, rounded to the nearest whole number.
-/// Returns 0 when `total` is 0 rather than dividing by zero.
-#[allow(clippy::arithmetic_side_effects)] // `total` is checked nonzero before the divide.
+#[allow(clippy::arithmetic_side_effects)]
 fn percentage(count: u32, total: u32) -> u32 {
     if total == 0 {
         return 0;
@@ -257,7 +237,7 @@ mod tests {
         assert_eq!(stats.total, 5);
         assert_eq!(stats.synced, 1);
         assert_eq!(stats.instrumental, 1);
-        assert_eq!(stats.plain, 2); // .txt + the timestamp-less .lrc
+        assert_eq!(stats.plain, 2);
         assert_eq!(stats.missing, 1);
         assert_eq!(stats.by_extension.get("flac"), Some(&4));
         assert_eq!(stats.by_extension.get("mp3"), Some(&1));
@@ -269,7 +249,7 @@ mod tests {
         let dir = tempdir().unwrap();
         write(&dir.path().join("01 Track.flac"), "audio");
         write(&dir.path().join("01 Track.lrc"), "[00:01.00]Hi\n");
-        write(&dir.path().join("02 Deleted.lrc"), "[00:01.00]Hi\n"); // no audio sibling
+        write(&dir.path().join("02 Deleted.lrc"), "[00:01.00]Hi\n");
 
         let stats = collect(dir.path());
         assert_eq!(stats.orphan_count(), 1);

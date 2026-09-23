@@ -1,16 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! `stats`, `lint`, and `ebook` are read-only: they never construct an `http::Client` and never
-//! write into the music tree. These tests drive all three against small fixture trees and assert
-//! nothing changed, following the same pattern as `read_only_guarantee.rs` (link the `lyrics`
-//! lib crate, `tempfile::tempdir()`, snapshot before/after).
-//!
-//! `lyrics tui --file`/`--list-themes` are read-only the same way (see AGENTS.md's module map):
-//! `--file` never constructs an `http::Client`, and neither path ever writes. Their CLI wiring
-//! lives in `main.rs`, outside the lib crate these tests link against, so what's exercised here
-//! is the library-level pieces `main.rs`'s `Command::Tui` arm calls: `theme::loader::list` and
-//! `lrc::parse_synced` reading a `--file` target.
+//! `stats`, `lint`, and `ebook` never write or delete anything.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,7 +11,7 @@ use std::time::SystemTime;
 use lyrics::ebook::{self, BookOptions};
 use lyrics::{lrc, stats, theme};
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 fn snapshot(dir: &Path) -> BTreeMap<std::path::PathBuf, (u64, SystemTime)> {
     let mut out = BTreeMap::new();
     for entry in walkdir::WalkDir::new(dir)
@@ -37,7 +28,7 @@ fn snapshot(dir: &Path) -> BTreeMap<std::path::PathBuf, (u64, SystemTime)> {
     out
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 fn build_fixture_tree(dir: &Path) {
     fs::write(dir.join("01 Synced.flac"), b"not really audio").unwrap();
     fs::write(
@@ -60,7 +51,7 @@ fn build_fixture_tree(dir: &Path) {
     .unwrap();
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn stats_and_lint_never_modify_the_tree() {
     let tmp = tempfile::tempdir().unwrap();
@@ -95,16 +86,14 @@ fn stats_and_lint_never_modify_the_tree() {
     );
 }
 
-/// A real tagged FLAC, needed because `ebook` groups by tags and skips anything untagged.
 const FIXTURE_FLAC: &str = "tests/fixtures/sample.flac";
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn ebook_never_modifies_the_music_tree() {
     let music = tempfile::tempdir().unwrap();
     let out_dir = tempfile::tempdir().unwrap();
 
-    // A tagged track with a synced sidecar, so the book has something to put on a page.
     let audio = music.path().join("01 Sample.flac");
     fs::copy(FIXTURE_FLAC, &audio).expect("fixture flac");
     fs::write(
@@ -112,14 +101,11 @@ fn ebook_never_modifies_the_music_tree() {
         "[ar:Test Artist]\n[00:01.00]Hello\n[00:02.00]World\n",
     )
     .unwrap();
-    // A second track with no sidecar: it must appear in the tracklist without being written to.
     fs::copy(FIXTURE_FLAC, music.path().join("02 Silent.flac")).expect("fixture flac");
 
     let before = snapshot(music.path());
     let before_entry_count = before.len();
 
-    // The output deliberately lands outside the scanned tree: the book is the only file this
-    // command may create, and it must never appear beside the music.
     let output = out_dir.path().join("Lyrics.epub");
     let options = BookOptions {
         title: "Lyrics".to_owned(),
@@ -150,20 +136,18 @@ fn ebook_never_modifies_the_music_tree() {
     );
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn tui_list_themes_and_file_lookup_never_write() {
     let tmp = tempfile::tempdir().unwrap();
     build_fixture_tree(tmp.path());
     let before = snapshot(tmp.path());
 
-    // `--list-themes`.
     let listing = theme::loader::list(None);
     assert!(!listing.built_in.is_empty());
     let printed = listing.to_string();
     assert!(printed.contains("stage"), "{printed}");
 
-    // `--file`, reading one of the fixture tree's own .lrc files.
     let contents = fs::read_to_string(tmp.path().join("01 Synced.lrc")).unwrap();
     let synced = lrc::parse_synced(&contents).expect("the fixture has timed lines");
     assert_eq!(synced.lines.len(), 2);
@@ -172,12 +156,11 @@ fn tui_list_themes_and_file_lookup_never_write() {
     assert_eq!(before, after, "no file's length or mtime changed");
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn ebook_reports_an_error_when_there_is_nothing_to_put_in_a_book() {
     let music = tempfile::tempdir().unwrap();
     let out_dir = tempfile::tempdir().unwrap();
-    // Tagged audio, but no sidecar anywhere: there is no book to write.
     fs::copy(FIXTURE_FLAC, music.path().join("01 Sample.flac")).expect("fixture flac");
 
     let output = out_dir.path().join("Lyrics.epub");

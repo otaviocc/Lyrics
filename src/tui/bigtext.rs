@@ -1,12 +1,11 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! The countdown's block-glyph digits: just enough of a font to spell `3`, `2`, `1` and `PLAY`.
+//! The countdown's block-glyph digits.
 
 const GLYPH_HEIGHT: usize = 5;
 const GLYPH_WIDTH: usize = 5;
 
-/// One 5x5 glyph, top row first. `#` is lit, anything else is not.
 const fn glyph(c: char) -> Option<[&'static str; GLYPH_HEIGHT]> {
     Some(match c {
         '1' => [" ##  ", "  #  ", "  #  ", "  #  ", " ### "],
@@ -20,10 +19,6 @@ const fn glyph(c: char) -> Option<[&'static str; GLYPH_HEIGHT]> {
     })
 }
 
-/// Render `text` (upper-cased, unsupported characters dropped) as `GLYPH_HEIGHT` rows.
-///
-/// One glyph-width column of space between letters. Returns `None` if `text` has no
-/// glyph-able characters at all.
 #[must_use]
 pub fn render(text: &str) -> Option<[String; GLYPH_HEIGHT]> {
     let glyphs: Vec<[&'static str; GLYPH_HEIGHT]> =
@@ -45,8 +40,6 @@ pub fn render(text: &str) -> Option<[String; GLYPH_HEIGHT]> {
     Some(rows)
 }
 
-/// The rendered width of `render`'s output for `text`, without actually rendering it — used to
-/// decide whether the big font fits before drawing it.
 #[must_use]
 pub const fn width(glyph_count: usize) -> usize {
     if glyph_count == 0 {
