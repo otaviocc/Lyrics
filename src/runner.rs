@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Per-track orchestration: decide what to do, do it, report it. Also the `scan` walk.
+//! Per-track decisions, the scan walk, and the audio-file walk `stats` shares.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -15,26 +15,15 @@ use crate::http::{Client, LyricsRecord, pick_best_candidate};
 use crate::meta::{self, ResolvedMeta, TrackMeta};
 use crate::sidecar::{self, SidecarState};
 
-/// What happened when processing a single audio file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    /// Wrote a synced .lrc where nothing existed before.
     Fetched,
-    /// Wrote a synced .lrc, replacing a plain .txt.
     Upgraded,
-    /// Wrote a plain .txt.
     Plain,
-    /// Wrote (or would have written) the instrumental marker.
     Instrumental,
-    /// Already had a synced .lrc; nothing to do.
     Skipped,
-    /// LRCLIB has nothing for this track.
     Missing,
-    /// Title/artist could not be resolved from tags (and path fallback didn't help, or was
-    /// disabled).
     Untagged,
-    /// A record was found but carried no new information (e.g. still only plain, and we
-    /// already have plain).
     NoChange,
 }
 
@@ -54,7 +43,6 @@ impl Outcome {
     }
 }
 
-/// Tallies accumulated across a `scan` run, printed as the final summary line.
 #[derive(Debug, Default)]
 pub struct Summary {
     pub synced: u32,
@@ -68,7 +56,6 @@ pub struct Summary {
 }
 
 impl Summary {
-    /// Bump the counter for the given outcome.
     const fn record(&mut self, outcome: Outcome) {
         match outcome {
             Outcome::Fetched => self.synced = self.synced.saturating_add(1),
@@ -82,7 +69,6 @@ impl Summary {
         }
     }
 
-    /// Format the summary as a single human-readable line.
     #[must_use]
     pub fn line(&self) -> String {
         format!(
@@ -99,7 +85,6 @@ impl Summary {
     }
 }
 
-/// Print a message to stdout unless `--quiet` is set and verbosity level is met.
 fn log(opts: &Options, level: u8, msg: impl AsRef<str>) {
     if opts.quiet {
         return;
@@ -109,7 +94,6 @@ fn log(opts: &Options, level: u8, msg: impl AsRef<str>) {
     }
 }
 
-/// Try `/api/get` first, then fall back to `/api/search` unless disabled.
 fn lookup(client: &mut Client, meta: &TrackMeta, opts: &Options) -> Result<Option<LyricsRecord>> {
     let mut record = client.get(meta)?;
     if record.is_none() && !opts.no_search_fallback {
@@ -124,11 +108,6 @@ fn lookup(client: &mut Client, meta: &TrackMeta, opts: &Options) -> Result<Optio
     Ok(record)
 }
 
-/// Process a single audio file. Returns the outcome; logs per-track detail per `opts`.
-///
-/// # Errors
-///
-/// Propagates I/O errors from sidecar writes and network errors from the lyrics provider.
 pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result<Outcome> {
     let resolved = meta::resolve(path, opts.path_fallback);
     let meta = match resolved {
@@ -228,11 +207,6 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
     Ok(Outcome::Missing)
 }
 
-/// Every recognized audio file under `dir`, in deterministic (path-sorted) order.
-///
-/// `scan`'s own walk. `stats::collect` classifies audio vs. sidecar files in a single pass
-/// instead of calling this, but shares the same underlying `meta::is_audio_file` check, so
-/// the two can never disagree about which files count as tracks.
 #[must_use]
 pub fn walk_audio_files(dir: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = WalkDir::new(dir)
@@ -245,13 +219,6 @@ pub fn walk_audio_files(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Walk `dir` recursively, processing every recognized audio file in deterministic
-/// (name-sorted) order, strictly sequentially.
-///
-/// # Errors
-///
-/// Propagates the first network or I/O error that cannot be recovered from; per-track errors
-/// are caught and counted in the returned [`Summary`].
 pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> {
     let mut summary = Summary::default();
 
@@ -268,13 +235,6 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> 
     Ok(summary)
 }
 
-/// Look up lyrics by artist/track name without an audio file.
-///
-/// Constructs a synthetic [`TrackMeta`] and delegates to the standard lookup pipeline.
-///
-/// # Errors
-///
-/// Propagates network errors from the lyrics provider.
 pub fn lookup_lyrics(
     client: &mut Client,
     track: &str,
@@ -288,7 +248,6 @@ pub fn lookup_lyrics(
         artist: artist.to_owned(),
         album: album.map(str::to_owned),
         duration: None,
-        // `show` looks a track up by name; none of the album-level tag fields exist for it.
         album_artist: None,
         track_number: None,
         disc_number: None,
@@ -298,15 +257,6 @@ pub fn lookup_lyrics(
     lookup(client, &meta, opts)
 }
 
-/// Display `text` in a terminal pager ($PAGER, or `less`).
-///
-/// When `color` is `true`, LRC timestamps like `[00:17.12]` are rendered in dark gray so the
-/// lyrics text stands out. Respects the `NO_COLOR` environment variable.
-///
-/// # Errors
-///
-/// Returns an error if the pager cannot be spawned or exits with a non-zero status, or if
-/// writing to the pager's stdin fails.
 pub fn print_lyrics(text: &str, color: bool) -> Result<()> {
     let use_color = color && std::env::var_os("NO_COLOR").is_none();
 
@@ -336,8 +286,7 @@ pub fn print_lyrics(text: &str, color: bool) -> Result<()> {
     Ok(())
 }
 
-/// Wrap LRC timestamps (`[MM:SS.xx]`) in a dark-gray ANSI color.
-#[allow(clippy::string_slice)] // All slices are derived from `find(']')` and `trim_start`, valid boundaries.
+#[allow(clippy::string_slice)]
 fn colorize_timestamps(text: &str) -> String {
     const GRAY: &str = "\x1b[38;5;240m";
     const RESET: &str = "\x1b[0m";

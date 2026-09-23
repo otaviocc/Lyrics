@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! The element table: every styled thing `lyrics tui` draws.
+//! The elements `tui` draws and their default styles.
 
 use serde::Deserialize;
 
@@ -78,11 +78,6 @@ impl Element {
     }
 }
 
-/// Every element's style, derived from the palette.
-///
-/// `CurrentLine` and `Countdown` are the two things this screen exists to draw attention to, so
-/// both get `accent` and bold; everything else fades in one of two steps
-/// (`NearLine`/`FarLine`) so the eye keeps landing on center.
 #[must_use]
 pub fn default_style(element: Element, palette: &Palette) -> Style {
     let style = Style::default();

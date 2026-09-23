@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Asserts that `meta::resolve` never modifies the audio file (length, mtime, and no extra
-//! sidecar files appear). Sidecar-writing is covered by the `write_*` tests in
-//! `src/sidecar.rs`.
+//! Reading a track's metadata never modifies the audio file.
 
 use std::fs;
 use std::path::Path;
@@ -11,7 +9,7 @@ use std::time::SystemTime;
 
 use lyrics::meta;
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 fn fixture_copy(tmp: &Path) -> std::path::PathBuf {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.flac");
     let dst = tmp.join("01 Test Track.flac");
@@ -19,7 +17,7 @@ fn fixture_copy(tmp: &Path) -> std::path::PathBuf {
     dst
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn reading_tags_never_modifies_the_audio_file() {
     let tmp = tempfile::tempdir().unwrap();
@@ -28,8 +26,6 @@ fn reading_tags_never_modifies_the_audio_file() {
     let before_len = fs::metadata(&audio).unwrap().len();
     let before_mtime = fs::metadata(&audio).unwrap().modified().unwrap();
 
-    // Exercise the real resolution path twice (default, then with path fallback), same as a
-    // `scan` would for a track it's already seen once and is re-processing on a later run.
     let _ = meta::resolve(&audio, false);
     let _ = meta::resolve(&audio, true);
 
@@ -39,18 +35,16 @@ fn reading_tags_never_modifies_the_audio_file() {
     assert_eq!(before_len, after_len, "audio file length changed");
     assert_eq!(before_mtime, after_mtime, "audio file mtime changed");
 
-    // The directory must contain only the audio file: resolving metadata writes nothing.
     let entries: Vec<_> = fs::read_dir(tmp.path())
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(entries.len(), 1);
 
-    // Sanity: mtime really is a meaningful signal on this filesystem.
     assert!(before_mtime <= SystemTime::now());
 }
 
-#[allow(clippy::expect_used, clippy::unwrap_used)] // Test file; panicking on failure is fine.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 #[test]
 fn resolved_metadata_matches_embedded_tags() {
     let tmp = tempfile::tempdir().unwrap();

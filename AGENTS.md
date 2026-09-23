@@ -169,7 +169,15 @@ make clean         # cargo clean
   `anyhow`, since callers (a future `--list-themes`-style consumer, or a test) may want to
   match on which problem it was; it converts into `anyhow::Error` at the `main.rs` boundary via
   `?` like any other `std::error::Error`.
-- Keep comments load-bearing: explain *why*, especially around the invariants above.
+- **No comments in Rust.** A file carries the two-line copyright/SPDX header and may carry a
+  single `//!` line saying what it is, for navigation. Nothing else: no `///`, no `//`. A
+  comment is a claim nobody checks, and it lends authority to whatever it sits above. Put the
+  explanation in the commit message, which is dated and tied to a diff. If code needs a
+  paragraph to be understood, prefer a name, a smaller function, or a test. The invariants
+  above are documented here, not in the code. TOML and Markdown *are* commented; the rule is
+  about code.
+- clap help text is written as `help = "..."` / `about = "..."` / `#[value(help = "...")]`
+  attributes, never as doc comments. `make run ARGS="<cmd> --help"` is the check.
 - Markdown line-length limit is 100 (see `.markdownlint-cli2.jsonc`).
 - Rust edition 2024, MSRV 1.89 (`Cargo.toml`).
 - The HTTP client is blocking (`ureq`), not async. Sequential requests are a design

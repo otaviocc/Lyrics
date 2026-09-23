@@ -1,19 +1,13 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! The listener's own clock: paused until they press Space, then free-running, and nudged by
-//! the seek keys until it lines up with whatever is actually playing in their music player.
-//!
-//! Takes an explicit `Instant` everywhere rather than reading `Instant::now()` itself, so tests
-//! don't depend on real time passing.
+//! The listener-driven playback clock.
 
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Clock {
-    /// The clock's position when it was last paused, or when it was created.
     base: Duration,
-    /// `Some(when it was started)` while playing; `None` while paused.
     started: Option<Instant>,
 }
 
@@ -26,7 +20,6 @@ impl Clock {
         }
     }
 
-    /// The clock's current position.
     #[must_use]
     pub fn now(&self, at: Instant) -> Duration {
         self.started.map_or(self.base, |started| {
@@ -59,8 +52,6 @@ impl Clock {
         }
     }
 
-    /// Move the clock by `delta`, keeping play/pause state. Saturates at 0 rather than going
-    /// negative.
     pub fn seek(&mut self, at: Instant, delta: SignedDuration) {
         let current = self.now(at);
         let moved = match delta {
@@ -70,7 +61,6 @@ impl Clock {
         self.set(at, moved);
     }
 
-    /// Jump straight to `position`, keeping play/pause state.
     pub const fn set(&mut self, at: Instant, position: Duration) {
         self.base = position;
         if self.started.is_some() {
@@ -78,7 +68,6 @@ impl Clock {
         }
     }
 
-    /// Restart at 00:00, paused — what `r`/`0` does.
     pub const fn restart(&mut self) {
         self.base = Duration::ZERO;
         self.started = None;
@@ -91,7 +80,6 @@ impl Default for Clock {
     }
 }
 
-/// A seek amount with a direction, since `Duration` itself is always non-negative.
 #[derive(Debug, Clone, Copy)]
 pub enum SignedDuration {
     Forward(Duration),
@@ -103,9 +91,6 @@ mod tests {
     use super::*;
 
     fn t(secs: u64) -> Instant {
-        // `Instant` has no public constructor; anchor every test off one fixed epoch (not a
-        // fresh `Instant::now()` per call, which would let real time elapsed between calls
-        // leak into the "5 seconds" a test asked for) and advance it.
         static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         EPOCH
             .get_or_init(Instant::now)
@@ -184,7 +169,6 @@ mod tests {
         let mut clock = Clock::new();
         clock.play(t(0));
         clock.seek(t(2), SignedDuration::Forward(Duration::from_secs(5)));
-        // At t(2) the clock read 2s; +5s puts it at 7s, still running.
         assert_eq!(clock.now(t(2)), Duration::from_secs(7));
         assert_eq!(clock.now(t(4)), Duration::from_secs(9));
     }

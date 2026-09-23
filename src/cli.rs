@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
+//! The command line, as clap sees it, and its merge with the config file.
+
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -8,19 +10,10 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::Config;
 use crate::provider::ProviderKind;
 
-/// Built-in default for `--duration-tolerance`, used when neither the CLI nor the config
-/// file sets it.
 pub const DEFAULT_DURATION_TOLERANCE: u32 = 2;
-/// Built-in default for `--delay-ms`.
 pub const DEFAULT_DELAY_MS: u64 = 300;
-/// Built-in default for `--max-retries`.
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-/// Fetch synced/plain lyrics from LRCLIB or lrcmux and write them as sidecar files next to your
-/// music.
-///
-/// This tool never reads embedded metadata destructively and never writes to audio files.
-/// See AGENTS.md for the read-only guarantee.
 #[derive(Parser, Debug)]
 #[command(name = "lyrics", version, about, long_about = None)]
 pub struct Cli {
@@ -30,119 +23,128 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Walk a directory tree and process every audio file found.
+    #[command(about = "Walk a directory tree and process every audio file found")]
     Scan {
-        /// Root directory to walk recursively.
+        #[arg(help = "Root directory to walk recursively")]
         dir: PathBuf,
 
         #[command(flatten)]
         options: SharedOptions,
     },
-    /// Process a single audio file.
+    #[command(about = "Process a single audio file")]
     Track {
-        /// Path to the audio file.
+        #[arg(help = "Path to the audio file")]
         file: PathBuf,
 
         #[command(flatten)]
         options: SharedOptions,
     },
-    /// Survey a directory tree's lyrics coverage. Read-only: makes no network requests.
+    #[command(
+        about = "Survey a directory tree's lyrics coverage. Read-only: makes no network requests"
+    )]
     Stats {
-        /// Root directory to walk recursively.
+        #[arg(help = "Root directory to walk recursively")]
         dir: PathBuf,
 
-        /// List orphaned sidecar paths instead of just counting them.
-        #[arg(short, long, action = clap::ArgAction::Count)]
+        #[arg(short, long, action = clap::ArgAction::Count, help = "List orphaned sidecar paths instead of just counting them")]
         verbose: u8,
     },
-    /// Check .lrc files for format and sync problems. Read-only: never writes.
+    #[command(about = "Check .lrc files for format and sync problems. Read-only: never writes")]
     Lint {
-        /// One or more .lrc files, or directories to search recursively.
-        #[arg(required = true)]
+        #[arg(
+            required = true,
+            help = "One or more .lrc files, or directories to search recursively"
+        )]
         paths: Vec<PathBuf>,
 
-        /// Treat warnings as errors.
-        #[arg(long)]
+        #[arg(long, help = "Treat warnings as errors")]
         strict: bool,
 
-        /// Print only the final summary line.
-        #[arg(short, long)]
+        #[arg(short, long, help = "Print only the final summary line")]
         quiet: bool,
     },
-    /// Build an EPUB of your library's lyrics. Read-only: makes no network requests.
+    #[command(
+        about = "Build an EPUB of your library's lyrics. Read-only: makes no network requests"
+    )]
     Ebook {
-        /// Root directory to walk recursively.
+        #[arg(help = "Root directory to walk recursively")]
         dir: PathBuf,
 
-        /// Destination path for the generated book. [default: ./Lyrics.epub]
-        #[arg(short, long)]
+        #[arg(
+            short,
+            long,
+            help = "Destination path for the generated book. [default: ./Lyrics.epub]"
+        )]
         output: Option<PathBuf>,
 
-        /// Book title, shown on the cover. [default: Lyrics]
-        #[arg(long)]
+        #[arg(long, help = "Book title, shown on the cover. [default: Lyrics]")]
         title: Option<String>,
 
-        /// Book author, written to the EPUB's metadata. [default: Various Artists]
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Book author, written to the EPUB's metadata. [default: Various Artists]"
+        )]
         author: Option<String>,
 
-        /// Print per-album detail.
-        #[arg(short, long, action = clap::ArgAction::Count, conflicts_with = "quiet")]
+        #[arg(short, long, action = clap::ArgAction::Count, conflicts_with = "quiet", help = "Print per-album detail")]
         verbose: u8,
 
-        /// Print only the final summary line.
-        #[arg(short, long, conflicts_with = "verbose")]
+        #[arg(
+            short,
+            long,
+            conflicts_with = "verbose",
+            help = "Print only the final summary line"
+        )]
         quiet: bool,
     },
-    /// Look up lyrics by artist/track name and display them in a pager.
+    #[command(about = "Look up lyrics by artist/track name and display them in a pager")]
     Show {
-        /// Track name to look up.
+        #[arg(help = "Track name to look up")]
         track: String,
 
-        /// Artist name.
-        #[arg(long)]
+        #[arg(long, help = "Artist name")]
         artist: String,
 
-        /// Album name (optional, refines the search).
-        #[arg(long)]
+        #[arg(long, help = "Album name (optional, refines the search)")]
         album: Option<String>,
 
         #[command(flatten)]
         options: SharedOptions,
     },
-    /// Follow along with synced lyrics: a full-screen teleprompter, current line centered.
+    #[command(
+        about = "Follow along with synced lyrics: a full-screen teleprompter, current line centered"
+    )]
     Tui {
-        /// Track name to look up (omit this with --file or --list-themes).
         #[arg(
             required_unless_present_any = ["file", "list_themes"],
             conflicts_with = "file",
-            requires = "artist"
+            requires = "artist",
+            help = "Track name to look up (omit this with --file or --list-themes)"
         )]
         track: Option<String>,
 
-        /// Artist name. Required alongside a track name.
-        #[arg(long)]
+        #[arg(long, help = "Artist name. Required alongside a track name")]
         artist: Option<String>,
 
-        /// Album name (optional, refines the search).
-        #[arg(long)]
+        #[arg(long, help = "Album name (optional, refines the search)")]
         album: Option<String>,
 
-        /// Read lyrics from a local .lrc (or .txt-in-LRC-syntax) file instead of fetching them.
-        /// Stays offline: no provider is queried.
-        #[arg(long, conflicts_with_all = ["track", "artist", "album"])]
+        #[arg(long, conflicts_with_all = ["track", "artist", "album"], help = "Read lyrics from a local .lrc (or .txt-in-LRC-syntax) file instead of fetching them. Stays offline: no provider is queried")]
         file: Option<PathBuf>,
 
-        /// Show a 3, 2, 1, PLAY countdown before the clock starts running.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Show a 3, 2, 1, PLAY countdown before the clock starts running"
+        )]
         counter: bool,
 
-        /// Theme to use: a bundled name, or one from ~/.config/lyrics/themes/. [default: stage]
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Theme to use: a bundled name, or one from ~/.config/lyrics/themes/. [default: stage]"
+        )]
         theme: Option<String>,
 
-        /// List built-in and user themes, then exit.
-        #[arg(long)]
+        #[arg(long, help = "List built-in and user themes, then exit")]
         list_themes: bool,
 
         #[command(flatten)]
@@ -150,97 +152,98 @@ pub enum Command {
     },
 }
 
-/// Raw CLI layer of the options shared by the `track`, `scan`, and `show` subcommands.
-///
-/// Value options (`duration_tolerance`, `provider`, `delay_ms`, `max_retries`, `user_agent`)
-/// are `Option<T>` here rather than carrying a `default_value_t`, so `SharedOptions::resolve`
-/// can tell "not passed on the CLI" apart from "explicitly set to the built-in default" and
-/// layer the config file in between. Boolean flags stay plain `bool`: clap can't distinguish
-/// "absent" from "false" for those, so they merge with the config file by OR instead (see
-/// `resolve`) — a flag turned on in the config can't be turned back off from the CLI.
 #[derive(Args, Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SharedOptions {
-    // --- Selection -----------------------------------------------------
-    /// Re-fetch and overwrite even tracks that already have a synced .lrc.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Re-fetch and overwrite even tracks that already have a synced .lrc"
+    )]
     pub force: bool,
 
-    /// For files with missing/empty tags, derive metadata from the path
-    /// (Artist/Album/NN Title.ext) instead of skipping them.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "For files with missing/empty tags, derive metadata from the path (Artist/Album/NN Title.ext) instead of skipping them"
+    )]
     pub path_fallback: bool,
 
-    /// Don't fall back to /api/search when /api/get returns 404.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Don't fall back to /api/search when /api/get returns 404"
+    )]
     pub no_search_fallback: bool,
 
-    /// Don't retry with version markers (e.g. "(Acoustic)", "[Live]", "[Bonus Track]") stripped
-    /// from the title when the initial lookup finds nothing.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Don't retry with version markers (e.g. \"(Acoustic)\", \"[Live]\", \"[Bonus Track]\") stripped from the title when the initial lookup finds nothing"
+    )]
     pub no_marker_fallback: bool,
 
-    /// Max duration delta (in seconds) accepted for a /api/search candidate. [default: 2]
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Max duration delta (in seconds) accepted for a /api/search candidate. [default: 2]"
+    )]
     pub duration_tolerance: Option<u32>,
 
-    // --- Output ----------------------------------------------------------
-    /// Report planned actions; write nothing to disk.
-    #[arg(long)]
+    #[arg(long, help = "Report planned actions; write nothing to disk")]
     pub dry_run: bool,
 
-    /// Keep the old .txt sidecar after a plain -> synced upgrade.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Keep the old .txt sidecar after a plain -> synced upgrade"
+    )]
     pub keep_plain: bool,
 
-    /// Print per-track detail. Repeat (-vv) to also log request URLs and timings.
-    #[arg(short, long, action = clap::ArgAction::Count, conflicts_with = "quiet")]
+    #[arg(short, long, action = clap::ArgAction::Count, conflicts_with = "quiet", help = "Print per-track detail. Repeat (-vv) to also log request URLs and timings")]
     pub verbose: u8,
 
-    /// Print only the final summary line.
-    #[arg(short, long, conflicts_with = "verbose")]
+    #[arg(
+        short,
+        long,
+        conflicts_with = "verbose",
+        help = "Print only the final summary line"
+    )]
     pub quiet: bool,
 
-    /// Disable colored output in `show` (timestamps are dimmed by default).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Disable colored output in `show` (timestamps are dimmed by default)"
+    )]
     pub no_color: bool,
 
-    // --- Network -----------------------------------------------------------
-    /// Lyrics provider to query. [default: lrclib]
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Lyrics provider to query. [default: lrclib]")]
     pub provider: Option<ProviderKind>,
 
-    /// Minimum delay between API requests, in milliseconds. [default: 300]
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Minimum delay between API requests, in milliseconds. [default: 300]"
+    )]
     pub delay_ms: Option<u64>,
 
-    /// Maximum retries for 429/5xx responses before giving up on a track. [default: 3]
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Maximum retries for 429/5xx responses before giving up on a track. [default: 3]"
+    )]
     pub max_retries: Option<u32>,
 
-    /// Override the User-Agent sent with every request.
-    #[arg(long)]
+    #[arg(long, help = "Override the User-Agent sent with every request")]
     pub user_agent: Option<String>,
 
-    // --- Config file -------------------------------------------------------
-    /// Load config from this path instead of the default location.
-    #[arg(long, conflicts_with = "no_config")]
+    #[arg(
+        long,
+        conflicts_with = "no_config",
+        help = "Load config from this path instead of the default location"
+    )]
     pub config: Option<PathBuf>,
 
-    /// Ignore the config file entirely; use only built-in defaults and CLI flags.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Ignore the config file entirely; use only built-in defaults and CLI flags"
+    )]
     pub no_config: bool,
 }
 
 impl SharedOptions {
-    /// Resolve the raw CLI layer against a loaded `Config`, applying the crate's one
-    /// precedence rule: built-in default -> config file -> CLI flag.
-    ///
-    /// Value options: the first of `self.field`, `config.options.field`, and the built-in
-    /// default that's present, in that order. Boolean flags: `self.field || config value`
-    /// (see the struct doc for why). `user_agent` additionally checks the config's
-    /// provider-specific table (`[lrclib]`/`[lrcmux]`) ahead of `[options].user_agent`, since
-    /// a per-provider override is more specific than a blanket one.
     #[must_use]
     pub fn resolve(&self, config: &Config) -> Options {
         let provider = self
@@ -287,13 +290,8 @@ impl SharedOptions {
     }
 }
 
-/// Fully resolved options: what `runner` and `http::Client` actually consume.
-///
-/// Every field is concrete (no `Option`, except `user_agent` which has no built-in default to
-/// fall back to). Built by `SharedOptions::resolve`, the single place precedence between the
-/// built-in default, the config file, and the CLI is defined.
 #[derive(Debug, Clone)]
-#[allow(clippy::struct_excessive_bools)] // Mirrors `SharedOptions`; see its own allow for why.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Options {
     pub force: bool,
     pub path_fallback: bool,

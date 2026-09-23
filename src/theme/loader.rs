@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 //! A theme file, the chain it inherits through, and the `Theme` it resolves to.
-//!
-//! Everything a file can state is `Option`, so a two-line theme is a valid one: what it does
-//! not say falls through to the base, and past the base to the defaults in Rust.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -97,9 +94,6 @@ pub struct ThemeFile {
 }
 
 impl ThemeFile {
-    /// # Errors
-    ///
-    /// Returns an error if `text` isn't valid TOML matching this shape.
     pub fn parse(text: &str, origin: &str) -> Result<Self, ThemeError> {
         toml::from_str(text).map_err(|source| ThemeError::Malformed {
             origin: origin.to_owned(),
@@ -308,13 +302,6 @@ fn head(
     Ok((find(DEFAULT, config_dir)?, DEFAULT.to_owned()))
 }
 
-/// Load a theme, following `base` chains through `config_dir`'s `themes/` directory and the
-/// built-ins, and finally the implicit `ansi` base.
-///
-/// # Errors
-///
-/// Returns an error for an unreadable or malformed file, an unknown theme name, a `base` cycle,
-/// or a color/modifier value that doesn't parse.
 pub fn load(
     config: Option<&Path>,
     name: Option<&str>,
@@ -356,9 +343,6 @@ pub fn load(
     })
 }
 
-/// # Errors
-///
-/// Returns an error for a color or modifier value in `file` that doesn't parse.
 pub fn resolve(file: ThemeFile, label: &str) -> Result<Theme, ThemeError> {
     let palette = palette(&file)?;
     let mut theme = Theme::new(palette);

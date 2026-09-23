@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Application state: the song, the clock, and what's currently on screen.
+//! Application state: the song, the clock, the mode, and the transient notice.
 
 use std::time::{Duration, Instant};
 
@@ -10,22 +10,14 @@ use crate::theme::Theme;
 use crate::tui::clock::{Clock, SignedDuration};
 use crate::tui::input::Action;
 
-/// How long each countdown digit (and `PLAY`) stays on screen.
 pub const COUNTDOWN_STEP: Duration = Duration::from_secs(1);
-/// Seek amounts bound to the short/long seek keys.
 const SHORT_SEEK: Duration = Duration::from_secs(5);
 const LONG_SEEK: Duration = Duration::from_secs(10);
-/// Fine-tune nudges bound to the short/long nudge keys, for lining the clock up by ear.
 const SHORT_NUDGE: Duration = Duration::from_millis(100);
 const LONG_NUDGE: Duration = Duration::from_millis(500);
-/// Breaks shorter than this get no `♪ 0:12` countdown: between two lyric lines a
-/// ticking counter would only flash up and vanish, and there's nothing to re-sync by ear.
 const MIN_BREAK: Duration = Duration::from_secs(5);
-/// How long a transient status notice (like "+5s") stays visible.
 const NOTICE_TTL: Duration = Duration::from_secs(2);
 
-/// A song's title, artist and synced lyric timeline: what `tui::run` was handed, independent
-/// of where it came from (a provider or `--file`).
 #[derive(Debug, Clone)]
 pub struct Song {
     pub title: String,
@@ -35,11 +27,7 @@ pub struct Song {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Counting down to `PLAY`; the clock is not running yet. `started` is when the countdown
-    /// began, so each step's remaining time is computed from it rather than accumulated.
-    Countdown {
-        step: u8,
-    },
+    Countdown { step: u8 },
     Playing,
     Help,
 }
@@ -70,8 +58,6 @@ impl App {
         }
     }
 
-    /// Index of the line active at `t`: the last line whose `at_ms` is `<= t`. `None` before
-    /// the first line starts.
     #[must_use]
     pub fn current_index(&self, t: Duration) -> Option<usize> {
         let ms = u64::try_from(t.as_millis()).unwrap_or(u64::MAX);
@@ -79,11 +65,6 @@ impl App {
         after.checked_sub(1)
     }
 
-    /// Time left until the next line with words, while `t` is in an instrumental stretch: the
-    /// intro before the first line, or a blank (`♪`) timed line. `None` during a lyric, after
-    /// the last one, or when the break is shorter than `MIN_BREAK`.
-    ///
-    /// Measured to the next *non-blank* line, so consecutive blank markers read as one break.
     #[must_use]
     pub fn break_remaining(&self, t: Duration) -> Option<Duration> {
         let current = self.current_index(t);
@@ -119,14 +100,10 @@ impl App {
         self.notice = Some((text.into(), at));
     }
 
-    /// Advance the countdown (called on every tick while `mode` is `Countdown`), moving to
-    /// `Playing` once it runs out. Returns `true` when the countdown just finished, so the
-    /// caller can start the clock at exactly the frame `PLAY` first shows.
     pub const fn advance_countdown(&mut self, at: Instant) {
         let Mode::Countdown { step } = self.mode else {
             return;
         };
-        // Five steps: 3, 2, 1, PLAY, then playing lyrics.
         let next = step.saturating_add(1);
         if next >= 4 {
             self.mode = Mode::Playing;
@@ -136,9 +113,6 @@ impl App {
         }
     }
 
-    /// Snap the clock to whichever line start is nearest, so one press as a line is sung
-    /// corrects the clock whether it was running early or late. The notice reports the
-    /// correction, never the line itself (invariant 3).
     fn tap_sync(&mut self, at: Instant) {
         let now = self.clock.now(at);
         let now_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
@@ -167,7 +141,6 @@ impl App {
         match action {
             Action::TogglePlay => {
                 if matches!(self.mode, Mode::Countdown { .. }) {
-                    // Canceling the countdown leaves the clock paused at 00:00, per spec.
                     self.mode = Mode::Playing;
                     self.clock.restart();
                 } else {
@@ -227,16 +200,12 @@ impl App {
     }
 }
 
-/// `+0.5s` / `-1.2s`: a signed offset to the tenth of a second, for the nudge and tap-sync
-/// notices (the whole-second seeks keep their own `+5s` format).
 fn format_offset(offset: SignedDuration) -> String {
     let (sign, by) = match offset {
         SignedDuration::Forward(by) => ('+', by),
         SignedDuration::Backward(by) => ('-', by),
     };
     let tenths = by.as_millis().saturating_add(50).saturating_div(100);
-    // A tap within 50ms of the line rounds to zero; a sign on it would claim a correction
-    // the listener can't see.
     let sign = if tenths == 0 {
         String::new()
     } else {
@@ -254,8 +223,6 @@ mod tests {
     use super::*;
 
     fn t(secs: u64) -> Instant {
-        // See `clock::tests::t`: anchored off one fixed epoch so real time elapsed between
-        // calls can't leak into the offsets these tests ask for.
         static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         EPOCH
             .get_or_init(Instant::now)

@@ -29,12 +29,6 @@ const NO_COLOR: &str = "none";
 const NONE_FORMS: &str = "a color; \"none\" removes a background and is accepted for bg alone";
 
 impl ColorSpec {
-    /// Resolve a palette slot's own color: no slot references allowed (a slot can't name
-    /// another slot).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the value isn't an index, `#rrggbb`, `reset`, or an ANSI name.
     pub fn resolve(&self) -> Result<Color, ColorError> {
         match self {
             Self::Index(index) => Ok(Color::Indexed(*index)),
@@ -42,12 +36,6 @@ impl ColorSpec {
         }
     }
 
-    /// Resolve an element's `fg`/`bg` value, which may additionally name a palette slot.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the value isn't a palette slot, an index, `#rrggbb`, `reset`, or an
-    /// ANSI name.
     pub fn resolve_against(&self, palette: &Palette) -> Result<Color, ColorError> {
         match self {
             Self::Index(index) => Ok(Color::Indexed(*index)),

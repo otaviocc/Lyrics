@@ -1,13 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! `lyrics tui`: a full-screen teleprompter.
-//!
-//! The current lyric line stays pinned to the screen's center, driven by a clock the listener
-//! controls (Space plays/pauses, the seek keys nudge it) rather than by wall-clock time synced
-//! to anything external. This is why invariant 3 in `AGENTS.md` is framed the way it is: this
-//! command's whole job is to display lyrics on the screen, on the alternate screen only, never
-//! to stdout/stderr as log output.
+//! `lyrics tui`: terminal setup and restore, and the event loop.
 
 pub mod app;
 pub mod bigtext;
@@ -25,16 +19,8 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use crate::theme::Theme;
 use crate::tui::app::{App, COUNTDOWN_STEP, Mode, Song};
 
-/// How often to redraw while nothing is happening, so the running clock's status-bar display
-/// stays live and a transient notice clears on time.
 const IDLE_TICK: Duration = Duration::from_millis(200);
 
-/// Run the teleprompter until the listener quits.
-///
-/// # Errors
-///
-/// Returns an error if the terminal can't be initialized, if drawing fails, or if the input
-/// thread loses its connection to the terminal.
 pub fn run(song: Song, theme: Theme, counter: bool) -> Result<()> {
     let mut terminal = ratatui::try_init().context("cannot open the terminal")?;
 
@@ -81,11 +67,6 @@ fn event_loop(
             .draw(|frame| view::draw(frame, app, elapsed))
             .context("cannot draw")?;
 
-        // Redraws are only worth polling for on a timer while something on screen is actually
-        // moving on its own: the countdown, the running clock (status-bar time, the current
-        // line), or a transient notice waiting to expire. Otherwise (paused, nothing pending)
-        // there is nothing to repaint until the next key press, so block on it instead of
-        // waking 5x/second to redraw an unchanged screen.
         let timed_out = if matches!(app.mode, Mode::Countdown { .. }) {
             match rx.recv_timeout(COUNTDOWN_STEP) {
                 Ok(wake) => {
@@ -128,9 +109,6 @@ fn event_loop(
 
 fn handle(app: &mut App, wake: &Wake) -> Result<()> {
     match wake {
-        // Filter to `Press`: some terminals (notably Windows, and any with the kitty keyboard
-        // protocol enabled) also report `Release`/`Repeat`, which would otherwise double up
-        // every action.
         Wake::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
             if let Some(action) = crate::tui::input::action(key, app.mode) {
                 app.apply(action, Instant::now());

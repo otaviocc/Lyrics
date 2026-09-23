@@ -1,28 +1,17 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Track metadata: embedded tags first, optional path-derived fallback.
-//!
-//! Metadata comes from `lofty`, a pure-Rust tag library, so no subprocess is ever spawned. The
-//! only lofty API called anywhere in this crate is `lofty::read_from_path`; do not add a call
-//! to any tag-writing API (read-only guarantee, see AGENTS.md). Directory layout is not a
-//! requirement; it is only consulted under `--path-fallback`.
+//! Track metadata: tags read with lofty, and the optional path fallback.
 
 use std::path::{Path, PathBuf};
 
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{Accessor, ItemKey, Tag};
 
-/// Audio file extensions this tool will consider during a `scan`.
 pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "m4a", "m4b", "mp4", "ogg", "opus", "wav", "aiff", "aif", "wma",
 ];
 
-/// Returns `true` if `path`'s extension case-insensitively matches one of `extensions`.
-///
-/// Shared by every extension check in the crate (`is_audio_file` here, plus the `.lrc`/`.txt`
-/// checks in `stats` and `lrc`), so a future change to how extensions are compared only needs
-/// to happen once.
 #[must_use]
 pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
@@ -30,46 +19,26 @@ pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
         .is_some_and(|e| extensions.iter().any(|a| a.eq_ignore_ascii_case(e)))
 }
 
-/// Returns `true` if `path` has an extension matching a known audio format (case-insensitive).
 #[must_use]
 pub fn is_audio_file(path: &Path) -> bool {
     has_extension(path, AUDIO_EXTENSIONS)
 }
 
-/// Resolved metadata for a single audio file, ready for a lyrics lookup.
-///
-/// Title and artist are always present (resolution fails without them). Album and duration
-/// are optional: not every file carries them, and the path fallback never guesses duration.
 #[derive(Debug, Clone)]
 pub struct TrackMeta {
-    /// Kept for callers/tests that need the source path alongside the resolved metadata;
-    /// `process_track` already has it separately and doesn't read this field.
     #[allow(dead_code)]
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
     pub album: Option<String>,
-    /// Duration in whole seconds, when readable from the file's audio properties.
-    /// Never derived from the path.
     pub duration: Option<u32>,
-    /// Album artist, when tagged. Distinct from `artist`: on a compilation every track carries
-    /// its own `artist` while sharing one `album_artist`. `ebook` groups chapters by this,
-    /// falling back to `artist`. Never derived from the path.
     pub album_artist: Option<String>,
-    /// Track number within its disc, when tagged. Never derived from the path (the filename's
-    /// leading digits are only ever *stripped*, by `strip_track_number`, never trusted as a
-    /// value).
     pub track_number: Option<u32>,
-    /// Disc number for multi-disc releases, when tagged. Absent means a single-disc album.
     pub disc_number: Option<u32>,
-    /// Release year, when tagged.
     pub year: Option<u32>,
-    /// Fields that were filled in via `--path-fallback` rather than an embedded tag,
-    /// reported back to the caller for logging.
     pub guessed: Vec<GuessedField>,
 }
 
-/// A metadata field that was filled in from the file path rather than an embedded tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuessedField {
     Title,
@@ -78,7 +47,6 @@ pub enum GuessedField {
 }
 
 impl GuessedField {
-    /// Human-readable name of the field, used in log output.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -89,7 +57,6 @@ impl GuessedField {
     }
 }
 
-/// Raw tag values read directly from the audio file, before any path-based guessing.
 struct RawTags {
     title: Option<String>,
     artist: Option<String>,
@@ -102,7 +69,6 @@ struct RawTags {
 }
 
 impl RawTags {
-    /// All-`None`: the file was unreadable, or carried no recognized tags.
     const fn empty() -> Self {
         Self {
             title: None,
@@ -117,28 +83,16 @@ impl RawTags {
     }
 }
 
-/// Read the album artist, which unlike title/artist/album has no `Accessor` method and must be
-/// looked up by its `ItemKey` (lofty maps the per-format spellings — `TPE2`, `ALBUMARTIST`,
-/// `aART` — onto this one key).
 fn album_artist(tag: &Tag) -> Option<String> {
     non_empty(tag.get_string(ItemKey::AlbumArtist).map(str::to_owned))
 }
 
-/// Read the release year. There is no `Accessor` method for it, and the tag is routinely a full
-/// date (`"1991-08-12"`) rather than a bare year, so only the leading four-digit run is taken.
-/// `RecordingDate` is tried first: for `ID3v2` that's `TDRC`, the modern frame, with the legacy
-/// `Year` key as the fallback.
 fn year(tag: &Tag) -> Option<u32> {
     tag.get_string(ItemKey::RecordingDate)
         .or_else(|| tag.get_string(ItemKey::Year))
         .and_then(parse_year)
 }
 
-/// Take the four-digit year off the front of a date tag value.
-///
-/// Split out from `year` so it can be tested without building a `Tag`: this crate only ever
-/// *reads* tags, and constructing one in a test would put tag-mutation calls in `src/` that the
-/// read-only guard grep is meant to keep out.
 fn parse_year(raw: &str) -> Option<u32> {
     let digits: String = raw
         .trim()
@@ -151,14 +105,10 @@ fn parse_year(raw: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// Trim and return `None` for empty strings, so callers never deal with whitespace-only tags.
 fn non_empty(s: Option<String>) -> Option<String> {
     s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// Read title, artist, album, and duration straight from the audio file's tags via lofty.
-///
-/// Returns all-`None` fields when the file is unreadable or carries no recognized tags.
 fn read_raw_tags(path: &Path) -> RawTags {
     let Ok(tagged) = lofty::read_from_path(path) else {
         return RawTags::empty();
@@ -188,12 +138,8 @@ fn read_raw_tags(path: &Path) -> RawTags {
     }
 }
 
-/// Strip a leading track-number prefix like "01 ", "01. ", "01_", "01-" from a filename stem.
-///
-/// Digits without a following separator are not stripped (e.g. "2001 A Space Odyssey" yields
-/// "A Space Odyssey" but "21" stays "21").
-#[allow(clippy::string_slice)] // Offsets are computed from `char_indices()`, always at boundaries.
-#[allow(clippy::arithmetic_side_effects)] // Index arithmetic on known-valid char boundaries.
+#[allow(clippy::string_slice)]
+#[allow(clippy::arithmetic_side_effects)]
 fn strip_track_number(stem: &str) -> &str {
     let mut chars = stem.char_indices().peekable();
     let mut digit_end = 0;
@@ -222,17 +168,6 @@ fn strip_track_number(stem: &str) -> &str {
     stem[sep_end..].trim_start()
 }
 
-/// Strip trailing bracketed marker groups from a title, e.g.
-/// `"Machine Gun Man (Acoustic) [Bonus Track]"` -> `"Machine Gun Man"`.
-///
-/// LRCLIB stores lyrics under the "base" track title; a version marker like `(Live)`,
-/// `[Bonus Track]`, or `(Acoustic)` tacked onto a locally-tagged title makes both `/api/get`
-/// and `/api/search` fail to find an otherwise-identical record (verified against the live
-/// API). Any trailing `(...)`/`[...]` group is stripped, generically rather than against a
-/// fixed keyword list, since the markers people use vary widely.
-///
-/// Returns `None` when nothing was stripped, so callers only retry when the title actually
-/// changed.
 #[must_use]
 pub fn strip_trailing_markers(title: &str) -> Option<String> {
     let mut current = title.trim_end();
@@ -250,8 +185,7 @@ pub fn strip_trailing_markers(title: &str) -> Option<String> {
     changed.then(|| current.to_string())
 }
 
-/// Strip exactly one trailing `(...)` or `[...]` group from `s`, if `s` ends with one.
-#[allow(clippy::string_slice)] // `open_idx` comes from `char_indices()`, always at a boundary.
+#[allow(clippy::string_slice)]
 fn strip_one_trailing_group(s: &str) -> Option<&str> {
     let (close, open) = match s.chars().next_back()? {
         ')' => (')', '('),
@@ -276,17 +210,12 @@ fn strip_one_trailing_group(s: &str) -> Option<&str> {
     Some(&s[..open_idx?])
 }
 
-/// Metadata guessed from the file's position in the directory tree (Artist/Album/Title).
 struct PathGuess {
     title: Option<String>,
     artist: Option<String>,
     album: Option<String>,
 }
 
-/// Derive title, album, and artist from a path shaped like `Artist/Album/01 Title.ext`.
-///
-/// The track-number prefix is stripped from the filename. Returns `None` for any field the
-/// path doesn't contain enough segments to fill.
 fn guess_from_path(path: &Path) -> PathGuess {
     let title = path
         .file_stem()
@@ -317,18 +246,11 @@ fn guess_from_path(path: &Path) -> PathGuess {
     }
 }
 
-/// Outcome of resolving a track's metadata.
 pub enum ResolvedMeta {
     Ok(TrackMeta),
-    /// Title and/or artist could not be resolved (tags missing and either path fallback is
-    /// disabled or the path itself didn't yield enough information).
     Untagged,
 }
 
-/// Resolve a track's metadata from embedded tags, optionally falling back to path-based
-/// guessing when `path_fallback` is enabled.
-///
-/// Returns `Untagged` when title or artist could not be determined from either source.
 #[must_use]
 pub fn resolve(path: &Path, path_fallback: bool) -> ResolvedMeta {
     let raw = read_raw_tags(path);
@@ -390,7 +312,6 @@ mod tests {
 
     #[test]
     fn does_not_strip_digits_with_no_separator() {
-        // "2001" style titles should survive untouched.
         assert_eq!(
             strip_track_number("2001 A Space Odyssey"),
             "A Space Odyssey"
@@ -429,14 +350,11 @@ mod tests {
 
     #[test]
     fn does_not_strip_down_to_an_empty_title() {
-        // The whole title is one bracketed group, so stripping it would leave nothing useful.
-        // Bail out instead of returning Some("").
         assert_eq!(strip_trailing_markers("(Interlude)"), None);
     }
 
     #[test]
     fn leaves_non_trailing_brackets_alone() {
-        // A parenthetical in the middle of the title, not at the end, isn't a version marker.
         assert_eq!(
             strip_trailing_markers("Say My Name (feat. Someone) Reprise"),
             None
@@ -460,7 +378,6 @@ mod tests {
 
     #[test]
     fn parses_the_year_out_of_a_full_date() {
-        // The "Year" key routinely holds a whole date; only the leading year is wanted.
         assert_eq!(parse_year("1991-08-12"), Some(1991));
         assert_eq!(parse_year("1991-08-12T00:00:00Z"), Some(1991));
         assert_eq!(parse_year("2003/05/01"), Some(2003));
@@ -472,7 +389,6 @@ mod tests {
         assert_eq!(parse_year("91"), None);
         assert_eq!(parse_year("199"), None);
         assert_eq!(parse_year("unknown"), None);
-        // Five leading digits is not a year, and must not silently truncate to four.
         assert_eq!(parse_year("19910"), None);
     }
 

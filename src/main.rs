@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
+//! The binary: parse the command line, run it, set the exit code.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -30,23 +32,10 @@ fn main() -> ExitCode {
     }
 }
 
-/// Load the config file `raw` points at (or the default location, unless `--no-config`) and
-/// resolve it against the CLI layer. The single place `Track`/`Scan`/`Show` go from raw CLI
-/// args to the concrete `Options` the rest of the crate consumes.
-///
-/// # Errors
-///
-/// Propagates a config file read/parse error. A missing file at the *default* location is not
-/// an error (see `config::load`) — having no config at all is the common case. A missing file
-/// at an *explicit* `--config <path>` is an error: the user named that path on purpose, so
-/// silently falling back to defaults would mask a typo instead of reporting it.
 fn resolve_options(raw: &SharedOptions) -> Result<Options> {
     Ok(raw.resolve(&load_config(raw)?))
 }
 
-/// The config-loading half of `resolve_options`, split out so `Command::Tui` can read
-/// `[tui]` (which `SharedOptions::resolve` has no reason to know about) alongside the usual
-/// network options.
 fn load_config(raw: &SharedOptions) -> Result<Config> {
     if raw.no_config {
         return Ok(Config::default());
@@ -64,7 +53,6 @@ fn load_config(raw: &SharedOptions) -> Result<Config> {
     }
 }
 
-/// Build an HTTP client from the resolved options.
 fn client_for(opts: &Options) -> Client {
     Client::new(ClientConfig {
         provider: opts.provider,
@@ -75,9 +63,6 @@ fn client_for(opts: &Options) -> Client {
     })
 }
 
-/// Build a client from already-resolved `options` and look up a lyrics record by name. The
-/// "resolve options, build a client, look up" sequence `run_show` and `run_tui`'s fetch path
-/// both need; each keeps its own record -> output handling.
 fn fetch_lyrics(
     track: &str,
     artist: &str,
@@ -88,8 +73,6 @@ fn fetch_lyrics(
     runner::lookup_lyrics(&mut client, track, artist, album, options)
 }
 
-/// Check every resolved `.lrc` file and print diagnostics. Returns `Ok(false)` (exit 1) when
-/// any error was found, or any warning was found under `--strict`.
 fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
     let (files, skipped) = lrc::resolve_lrc_paths(paths);
     for path in &skipped {
@@ -145,7 +128,6 @@ fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
     total_errors == 0 && !(strict && total_warnings > 0)
 }
 
-/// `Command::Scan`. Returns `Ok(false)` only when every track in the walk errored.
 fn run_scan(dir: &Path, options: &SharedOptions) -> Result<bool> {
     if !dir.is_dir() {
         anyhow::bail!("{} is not a directory", dir.display());
@@ -168,7 +150,6 @@ fn run_scan(dir: &Path, options: &SharedOptions) -> Result<bool> {
     Ok(!all_failed)
 }
 
-/// `Command::Ebook`.
 fn run_ebook(
     dir: &Path,
     output: Option<PathBuf>,
@@ -180,8 +161,6 @@ fn run_ebook(
     if !dir.is_dir() {
         anyhow::bail!("{} is not a directory", dir.display());
     }
-    // Defaults land here rather than in `SharedOptions::resolve`: that function is the one
-    // place *config file* precedence is defined, and `ebook` has no config surface.
     let output = output.unwrap_or_else(|| PathBuf::from(ebook::DEFAULT_OUTPUT));
     let options = BookOptions {
         title: title.unwrap_or_else(|| ebook::DEFAULT_TITLE.to_owned()),
@@ -196,7 +175,6 @@ fn run_ebook(
     Ok(true)
 }
 
-/// `Command::Show`.
 fn run_show(
     track: &str,
     artist: &str,
@@ -221,8 +199,6 @@ fn run_show(
     Ok(true)
 }
 
-/// Returns `Ok(true)` on overall success, `Ok(false)` if the run completed but every track
-/// errored (see plan §4 exit-code rule).
 fn run(cli: Cli) -> Result<bool> {
     match cli.command {
         Command::Track { file, options } => {
@@ -290,8 +266,6 @@ fn run(cli: Cli) -> Result<bool> {
     }
 }
 
-/// `Command::Tui`'s fields, gathered into a struct so `run_tui` reads as one call rather than
-/// eight positional arguments, and so `run`'s match arm stays one line.
 struct TuiArgs {
     track: Option<String>,
     artist: Option<String>,
@@ -303,9 +277,6 @@ struct TuiArgs {
     options: SharedOptions,
 }
 
-/// `lyrics tui`. Fetches (or reads, with `--file`) a synced lyric file, parses its timeline,
-/// and hands it to `tui::run` to display. `--file` never constructs an `http::Client`, keeping
-/// that path offline like `stats`/`lint`/`ebook`.
 fn run_tui(args: &TuiArgs) -> Result<bool> {
     let config = load_config(&args.options)?;
     let config_dir = config::config_dir();
@@ -347,8 +318,6 @@ fn run_tui(args: &TuiArgs) -> Result<bool> {
         let Some(artist) = args.artist.clone() else {
             anyhow::bail!("--artist is required alongside a track name");
         };
-        // `config` was already loaded above (to read `[tui].theme`); resolving straight
-        // against it avoids `resolve_options`' own `load_config` re-reading the same file.
         let options = args.options.resolve(&config);
         let record = fetch_lyrics(&track, &artist, args.album.as_deref(), &options)?;
         let Some(record) = record else {

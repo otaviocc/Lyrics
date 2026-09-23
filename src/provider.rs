@@ -1,46 +1,30 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Provider selection: which lyrics API `http::Client` talks to.
-//!
-//! Both known providers speak the identical LRCLIB wire format, so a provider is just
-//! a pair of URLs plus a display name, not a separate trait implementation. Adding another
-//! LRCLIB-API-compatible service later is a one-line addition to `ProviderKind`/`spec()`. A
-//! provider with a genuinely different response shape would be the point where a real
-//! `Provider` trait becomes worth introducing, not before.
+//! The lyrics providers and their base URLs.
 
 use clap::ValueEnum;
 use serde::Deserialize;
 
-/// Supported lyrics providers.
-///
-/// All known providers speak the same LRCLIB wire format, so adding a new compatible
-/// service is a one-line addition to `ProviderKind` and `spec()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
-    /// The reference LRCLIB API: <https://lrclib.net/docs>.
+    #[value(help = "The reference LRCLIB API: <https://lrclib.net/docs>")]
     Lrclib,
-    /// lrcmux's LRCLIB-compatible shim, aggregating multiple sources: <https://lrcmux.dev/docs>.
+    #[value(
+        help = "lrcmux's LRCLIB-compatible shim, aggregating multiple sources: <https://lrcmux.dev/docs>"
+    )]
     Lrcmux,
 }
 
-/// Concrete endpoints and display name for a lyrics provider.
 pub struct ProviderSpec {
-    /// Short name used in logging and error messages.
     pub name: &'static str,
     pub get_url: &'static str,
     pub search_url: &'static str,
-    /// An extra provider-specific header name to also carry the User-Agent value in, if the
-    /// provider documents one (e.g. LRCLIB's own suggested `Lrclib-Client` alternative for
-    /// clients that can't set `User-Agent` directly). `None` when a provider has no such
-    /// alternative, since sending a header literally named after another provider would be
-    /// misleading, so this is opt-in per provider rather than a hardcoded constant.
     pub client_header: Option<&'static str>,
 }
 
 impl ProviderKind {
-    /// Return the endpoints and configuration for this provider.
     #[must_use]
     pub const fn spec(self) -> ProviderSpec {
         match self {

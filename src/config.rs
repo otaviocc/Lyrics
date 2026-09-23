@@ -1,15 +1,7 @@
 // Copyright (c) 2026 Otávio C.
 // SPDX-License-Identifier: MIT
 
-//! Persistent CLI defaults: `~/.config/lyrics/config.toml`.
-//!
-//! Precedence, defined once in `cli::SharedOptions::resolve`: built-in default -> config file
-//! -> CLI flag. This module only loads and parses the file; it has no opinion on how its
-//! values get merged with the CLI.
-//!
-//! `$XDG_CONFIG_HOME/lyrics/config.toml` is honored on every platform (including macOS,
-//! rather than `~/Library/Application Support`) so the file lives somewhere a user expects to
-//! edit by hand, with no extra platform-detection dependency.
+//! Loading `~/.config/lyrics/config.toml`.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +10,6 @@ use serde::Deserialize;
 
 use crate::provider::ProviderKind;
 
-/// Root of `config.toml`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -32,20 +23,12 @@ pub struct Config {
     pub tui: TuiConfig,
 }
 
-/// The `[tui]` table: persistent preferences for `lyrics tui`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TuiConfig {
     pub theme: Option<String>,
 }
 
-/// The `[options]` table. Every field is optional: an absent key means "use the built-in
-/// default, or whatever the CLI says."
-///
-/// `force` and `dry_run` are deliberately not configurable here: a config that silently
-/// forces every run to re-fetch, or silently makes every run a no-op, is a footgun rather
-/// than a convenience. `verbose`/`quiet` are omitted too — they conflict with each other in
-/// clap and are inherently per-invocation, not persistent preferences.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Options {
@@ -61,15 +44,12 @@ pub struct Options {
     pub no_color: Option<bool>,
 }
 
-/// A `[lrclib]`/`[lrcmux]` table: provider-specific overrides layered on top of `[options]`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub user_agent: Option<String>,
 }
 
-/// `$XDG_CONFIG_HOME/lyrics/config.toml`, falling back to `$HOME/.config/lyrics/config.toml`.
-/// Returns `None` when neither `XDG_CONFIG_HOME` nor `HOME` is set.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
@@ -84,25 +64,11 @@ pub fn default_path() -> Option<PathBuf> {
     )
 }
 
-/// `$XDG_CONFIG_HOME/lyrics`, falling back to `$HOME/.config/lyrics`.
-///
-/// The directory `config.toml` lives in, and where `tui`'s user themes (`themes/*.toml`) and
-/// `theme.toml` live too. `None` under the same conditions as `default_path`.
 #[must_use]
 pub fn config_dir() -> Option<PathBuf> {
     default_path()?.parent().map(Path::to_path_buf)
 }
 
-/// Load and parse `path`.
-///
-/// A missing file yields `Config::default()`, since having no config at all is the common
-/// case, not an error; a malformed one is an error, since a typo'd key silently ignored would
-/// be worse than a loud failure.
-///
-/// # Errors
-///
-/// Returns an error if the file exists but can't be read, or fails to parse as valid TOML
-/// matching this shape (an unknown key included).
 pub fn load(path: &Path) -> Result<Config> {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -166,15 +132,6 @@ mod tests {
         assert!(load(&path).is_err());
     }
 
-    /// One test, not two: `std::env::set_var` mutates process-wide state, and `cargo test`
-    /// runs tests in the same process concurrently by default, so two tests each poking
-    /// `XDG_CONFIG_HOME`/`HOME` independently could race. Exercising both precedence rungs
-    /// back-to-back in one test avoids that.
-    ///
-    /// # Safety
-    ///
-    /// Per `env::set_var`'s doc caveat: safe here because no other thread in this test binary
-    /// reads these two vars, so there's no data race with the sequential mutations below.
     #[test]
     fn default_path_prefers_xdg_config_home_then_falls_back_to_home() {
         unsafe {

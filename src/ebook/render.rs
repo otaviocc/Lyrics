@@ -2,61 +2,39 @@
 // SPDX-License-Identifier: MIT
 
 //! Render a [`Book`] into the XHTML documents, stylesheet, and images an EPUB is made of.
-//!
-//! Nothing here touches the filesystem or the ZIP container: it takes a book model and returns
-//! bytes, which is what lets the whole layer be unit-tested against exact expected strings.
-//! [`super::epub`] packages the result.
-//!
-//! The one structural decision worth knowing: **every song is its own XHTML document**. A CSS
-//! `page-break-before` is a hint that reflowable readers honor inconsistently, but a new
-//! document always starts a new page — so "a lyric never shares a page with the previous one"
-//! is guaranteed by the file layout rather than by styling.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use crate::ebook::library::{Album, Artist, Book, LyricState, Track};
 
-/// A rendered XHTML document destined for the book.
 pub struct Page {
-    /// Path inside the EPUB's content directory, e.g. `song-0001.xhtml`.
     pub path: String,
-    /// Manifest id, referenced by the spine.
     pub id: String,
     pub content: String,
 }
 
-/// A binary asset (album art or the cover collage) destined for the book.
 pub struct Image {
     pub path: String,
     pub id: String,
     pub bytes: Vec<u8>,
 }
 
-/// Everything needed to write the container.
 pub struct Rendered {
-    /// Content documents, in spine (reading) order.
     pub pages: Vec<Page>,
     pub images: Vec<Image>,
     pub stylesheet: String,
     pub nav: String,
     pub ncx: String,
     pub opf: String,
-    /// Manifest id of the cover image, when there is one.
     pub cover_id: Option<String>,
 }
 
-/// Book-level metadata supplied by the caller.
 pub struct BookInfo {
     pub title: String,
     pub author: String,
 }
 
-/// Escape text for inclusion in XML character data or an attribute value.
-///
-/// Every user-supplied string — album titles, artist names, lyric lines — passes through here.
-/// An unescaped `&` in a band name is the single likeliest way to produce an EPUB that readers
-/// reject outright, and library metadata is full of them.
 #[must_use]
 pub fn escape_xml(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -73,11 +51,6 @@ pub fn escape_xml(text: &str) -> String {
     out
 }
 
-/// A stable 64-bit FNV-1a hash, used to derive the book's unique identifier from its title.
-///
-/// EPUB requires a `dc:identifier`. Deriving it from the title rather than generating a UUID
-/// keeps the output byte-identical across runs — which is what makes the whole book testable —
-/// and avoids a `uuid` dependency for one string.
 fn stable_hash(text: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in text.as_bytes() {
@@ -87,13 +60,8 @@ fn stable_hash(text: &str) -> u64 {
     hash
 }
 
-/// Timestamp written as the EPUB's `dcterms:modified`, which the spec requires.
-///
-/// Deliberately a constant rather than the current time: a real clock reading would make two
-/// builds of an unchanged library differ, defeating the reproducibility the tests rely on.
 const MODIFIED: &str = "2026-01-01T00:00:00Z";
 
-/// XHTML document preamble, shared by every page.
 fn page_header(title: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -110,22 +78,12 @@ fn page_header(title: &str) -> String {
     )
 }
 
-/// Closing tags for every page.
 const PAGE_FOOTER: &str = "</body>\n</html>\n";
 
-// --- Layout ------------------------------------------------------------------------------
-//
-// Filenames are assigned before any page is rendered, because an album's tracklist links to
-// the song pages it lists. The layout types below are that first pass.
-
-/// A track paired with the song page it will link to, if it has one.
 struct TrackLayout<'a> {
     track: &'a Track,
-    /// `None` for instrumental and lyric-less tracks: they appear in the tracklist but get no
-    /// page, so there is nothing to link to.
     file: Option<String>,
     id: Option<String>,
-    /// 1-based position within the disc, used to number a track whose tag has no number.
     position: u32,
 }
 
@@ -138,7 +96,6 @@ struct AlbumLayout<'a> {
     album: &'a Album,
     file: String,
     id: String,
-    /// `(path, id)` of the embedded art, when the source file decoded.
     art: Option<(String, String)>,
     discs: Vec<DiscLayout<'a>>,
 }
@@ -150,10 +107,6 @@ struct ArtistLayout<'a> {
     albums: Vec<AlbumLayout<'a>>,
 }
 
-/// Assign every page and image a filename and manifest id, and decode album art.
-///
-/// `thumbnail` is injected rather than called directly so the layout can be tested without
-/// touching real image files.
 fn lay_out<F>(book: &Book, mut thumbnail: F) -> (Vec<ArtistLayout<'_>>, Vec<Image>)
 where
     F: FnMut(&PathBuf) -> Option<Vec<u8>>,
@@ -242,16 +195,6 @@ where
     (artists, images)
 }
 
-// --- Pages -------------------------------------------------------------------------------
-
-/// The cover: one full-bleed image, and nothing else.
-///
-/// Title included — `cover::cover_image` rasterizes it into the JPEG. Nothing about the cover is
-/// markup, because reading systems re-theme markup: Apple Books in night mode discards a
-/// `background-color` and substitutes its own text color, which left an HTML title illegible on
-/// the artwork. No reader re-themes an image. Don't reintroduce a CSS overlay here.
-///
-/// Only called when there is an image; `render` omits the cover page entirely otherwise.
 fn cover_page(info: &BookInfo) -> String {
     let mut out = page_header(&info.title);
     let _ = writeln!(
@@ -263,15 +206,6 @@ fn cover_page(info: &BookInfo) -> String {
     out
 }
 
-/// The book's table of contents: one entry per artist.
-///
-/// Artists only, deliberately. Each artist chapter already opens with an index of its own
-/// albums, so listing every album here as well would repeat the whole book's structure on a
-/// page nobody reads twice.
-///
-/// This is a real page in the spine, distinct from `nav.xhtml`: the navigation document drives
-/// the reader's own TOC menu but is never paged into, so without this the book has no contents
-/// you can simply turn to.
 fn contents_page(artists: &[ArtistLayout], info: &BookInfo) -> String {
     let mut out = page_header(&info.title);
     out.push_str("<section epub:type=\"toc\">\n<h1 class=\"contents\">Contents</h1>\n<ul class=\"contents\">\n");
@@ -288,7 +222,6 @@ fn contents_page(artists: &[ArtistLayout], info: &BookInfo) -> String {
     out
 }
 
-/// An artist chapter: a title page listing the artist's albums.
 fn artist_page(layout: &ArtistLayout) -> String {
     let name = &layout.artist.name;
     let mut out = page_header(name);
@@ -314,14 +247,11 @@ fn artist_page(layout: &ArtistLayout) -> String {
     out
 }
 
-/// Render one track's line in a tracklist.
 fn tracklist_entry(layout: &TrackLayout, album_artist: &str) -> String {
     let track = layout.track;
     let number = track.number.unwrap_or(layout.position);
     let title = escape_xml(&track.title);
 
-    // A linked title is the signal that a track has lyrics; an unlinked one that it doesn't.
-    // Labelling every lyric-less line "no lyrics" would be noise on a sparsely covered album.
     let title = layout.file.as_ref().map_or_else(
         || format!("<span class=\"title\">{title}</span>"),
         |file| format!("<a href=\"{}\">{title}</a>", escape_xml(file)),
@@ -333,8 +263,6 @@ fn tracklist_entry(layout: &TrackLayout, album_artist: &str) -> String {
         ""
     };
 
-    // On a compilation each track has its own artist; show it only where it differs from the
-    // album's, so a normal single-artist album isn't cluttered with a repeated name.
     let artist = if track.artist == album_artist {
         String::new()
     } else {
@@ -354,7 +282,6 @@ fn tracklist_entry(layout: &TrackLayout, album_artist: &str) -> String {
     )
 }
 
-/// An album subchapter: cover art, then the album's full tracklist.
 fn album_page(layout: &AlbumLayout) -> String {
     let album = layout.album;
     let mut out = page_header(&album.title);
@@ -389,8 +316,6 @@ fn album_page(layout: &AlbumLayout) -> String {
     );
 
     for disc in &layout.discs {
-        // Only a genuinely multi-disc album gets "CD n" headings; a single-disc release would
-        // just carry a redundant "CD 1" above its only list.
         if album.is_multi_disc() {
             let _ = writeln!(out, "<h2 class=\"disc\">CD {}</h2>", disc.number);
         }
@@ -406,7 +331,6 @@ fn album_page(layout: &AlbumLayout) -> String {
     out
 }
 
-/// One song's lyrics, on a page of its own.
 fn song_page(track: &Track, album_artist: &str) -> String {
     let mut out = page_header(&track.title);
     let _ = writeln!(
@@ -433,7 +357,6 @@ fn song_page(track: &Track, album_artist: &str) -> String {
     out
 }
 
-/// The closing page: what the book contains and what it left out.
 fn colophon_page(book: &Book) -> String {
     let mut out = page_header("About this book");
     out.push_str(
@@ -467,9 +390,6 @@ fn colophon_page(book: &Book) -> String {
     out
 }
 
-// --- Navigation --------------------------------------------------------------------------
-
-/// The EPUB 3 navigation document: artists as sections, their albums nested beneath.
 fn nav_document(artists: &[ArtistLayout], info: &BookInfo) -> String {
     let mut out = page_header(&info.title);
     out.push_str("<nav epub:type=\"toc\" id=\"toc\">\n<h1>Contents</h1>\n<ol>\n");
@@ -495,8 +415,6 @@ fn nav_document(artists: &[ArtistLayout], info: &BookInfo) -> String {
     out
 }
 
-/// The EPUB 2 navigation map. Superseded by `nav.xhtml`, but still what older readers look for,
-/// and cheap to emit alongside it.
 fn ncx_document(artists: &[ArtistLayout], info: &BookInfo, uid: &str) -> String {
     let mut out = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -541,7 +459,6 @@ fn ncx_document(artists: &[ArtistLayout], info: &BookInfo, uid: &str) -> String 
     out
 }
 
-/// The package document: metadata, the manifest of every file, and the spine's reading order.
 fn opf_document(
     info: &BookInfo,
     uid: &str,
@@ -564,8 +481,6 @@ fn opf_document(
         escape_xml(&info.author)
     );
     if let Some(id) = cover_id {
-        // The `name="cover"` form is EPUB 2, kept because several readers still use it to find
-        // the thumbnail for a library shelf.
         let _ = writeln!(out, "<meta name=\"cover\" content=\"{}\"/>", escape_xml(id));
     }
     out.push_str("</metadata>\n<manifest>\n");
@@ -601,12 +516,6 @@ fn opf_document(
     out
 }
 
-/// The book's stylesheet.
-///
-/// Ragged right rather than justified: justification stretches word spacing to fill a line, and
-/// lyric lines are short enough that it opens rivers of whitespace across the page. The hanging
-/// indent matters for the same reason — without it, a long line that wraps is indistinguishable
-/// from the next line of the song.
 const STYLESHEET: &str = r#"@charset "utf-8";
 
 /* No margin on the body: the cover is full-bleed, and every other page indents itself via
@@ -742,11 +651,6 @@ ul.colophon li { margin: 0.4em 0; }
 p.credit { margin-top: 2em; font-size: 0.85em; color: #777; }
 "#;
 
-/// Render `book` into every file the container needs, in reading order.
-///
-/// `thumbnail` decodes and downscales one album-art file, returning `None` if it can't;
-/// `cover` builds the collage from the art paths it is handed. Both are injected so this
-/// function stays free of image decoding and therefore testable on its own.
 pub fn render<F, C>(book: &Book, info: &BookInfo, thumbnail: F, cover: C) -> Rendered
 where
     F: FnMut(&PathBuf) -> Option<Vec<u8>>,
@@ -765,7 +669,6 @@ where
         id
     });
 
-    // No image means the encoder failed; a cover page with nothing on it is worse than none.
     let mut pages: Vec<Page> = cover_id
         .iter()
         .map(|_| Page {
@@ -875,7 +778,6 @@ mod tests {
         }
     }
 
-    /// Render with image work stubbed out: no art decodes, no cover collage.
     fn render_bare(book: &Book) -> Rendered {
         render(book, &info(), |_| None, |_| None)
     }
@@ -917,7 +819,6 @@ mod tests {
 
     #[test]
     fn every_song_gets_its_own_document() {
-        // The page-break guarantee: three songs, three separate XHTML files.
         let book = book_with(vec![Disc {
             number: 1,
             tracks: vec![
@@ -967,7 +868,6 @@ mod tests {
             .content;
         assert!(page.contains("Silent"));
         assert!(page.contains("Interlude"));
-        // The linked title is the "has lyrics" signal; the other two are unlinked.
         assert!(page.contains(r#"<a href="song-0001.xhtml">Has Lyrics</a>"#));
         assert!(page.contains(r#"<span class="title">Silent</span>"#));
         assert!(page.contains(r#"<span class="tag">instrumental</span>"#));
@@ -1012,7 +912,6 @@ mod tests {
             .content;
         assert!(page.contains(r#"<h2 class="disc">CD 1</h2>"#));
         assert!(page.contains(r#"<h2 class="disc">CD 2</h2>"#));
-        // One list per disc.
         assert_eq!(page.matches("<ul class=\"tracklist\">").count(), 2);
     }
 
@@ -1071,7 +970,6 @@ mod tests {
             .find(|p| p.path == "album-0001.xhtml")
             .unwrap()
             .content;
-        // The tagged number is used where present, the 1-based position where it isn't.
         assert!(page.contains(r#"<span class="num">9</span>"#));
         assert!(page.contains(r#"<span class="num">2</span>"#));
     }
@@ -1092,7 +990,6 @@ mod tests {
         assert!(
             song.contains("<div class=\"stanza\">\n<p>A line</p>\n<p>Another line</p>\n</div>")
         );
-        // Timestamps never reach the page — they were dropped upstream in `lyrics::to_stanzas`.
         assert!(!song.contains('['));
     }
 
@@ -1118,7 +1015,6 @@ mod tests {
                 page.id
             );
         }
-        // A track with no lyrics contributes no document, so none may be listed.
         assert!(!rendered.opf.contains("song-0002.xhtml"));
     }
 
@@ -1144,8 +1040,6 @@ mod tests {
 
     #[test]
     fn every_list_class_used_in_a_page_is_covered_by_the_list_reset() {
-        // Adding a `<ul class="...">` without adding it to the reset rule leaves the browser's
-        // default bullets and indent on it, which is how the contents page first shipped wrong.
         let book = book_with(vec![Disc {
             number: 1,
             tracks: vec![track("One", 1, LyricState::Synced)],
@@ -1193,7 +1087,6 @@ mod tests {
 
     #[test]
     fn the_contents_page_lists_every_artist_and_no_albums() {
-        // Albums are deliberately absent: each artist chapter indexes its own.
         let book = Book {
             artists: vec![
                 Artist {
@@ -1243,7 +1136,6 @@ mod tests {
 
     #[test]
     fn artist_chapters_keep_their_own_album_index() {
-        // The contents page replaces nothing: the per-artist index stays.
         let book = book_with(vec![Disc {
             number: 1,
             tracks: vec![track("One", 1, LyricState::Synced)],
@@ -1266,7 +1158,6 @@ mod tests {
             tracks: vec![track("One", 1, LyricState::Synced)],
         }]);
         let rendered = render_bare(&book);
-        // The album's entry sits in a list nested inside the artist's, not beside it.
         assert!(rendered.nav.contains(concat!(
             "<li><a href=\"artist-001.xhtml\">Test Artist</a>\n",
             "<ol>\n",
@@ -1297,7 +1188,6 @@ mod tests {
         assert!(rendered.cover_id.is_none());
         assert!(!rendered.opf.contains("cover-image"));
         assert!(rendered.images.is_empty());
-        // No image means no cover page at all, rather than an empty one.
         assert!(rendered.pages.iter().all(|p| p.path != "cover.xhtml"));
         assert_eq!(
             rendered.pages.first().map(|p| p.path.as_str()),
@@ -1307,7 +1197,6 @@ mod tests {
 
     #[test]
     fn the_cover_page_is_an_image_and_nothing_else() {
-        // The title is baked into the JPEG, so no markup on this page may carry it.
         let book = book_with(vec![Disc {
             number: 1,
             tracks: vec![track("One", 1, LyricState::Synced)],
