@@ -37,7 +37,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Down j", "jump to the next line"),
             (", .", "nudge -0.1s · +0.1s, for fine sync"),
             ("< >", "nudge -0.5s · +0.5s"),
-            ("Enter", "snap to the nearest line, tap as it's sung"),
+            ("Enter", "start this line (paused) · snap (playing)"),
         ],
     ),
     (

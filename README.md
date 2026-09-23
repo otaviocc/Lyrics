@@ -96,6 +96,9 @@ instant `PLAY` appears.
 During an intro or an instrumental break of 5s or more, the `♪` counts down to the next line
 (`♪ 0:12`), so you can tell at a glance whether the clock is still in sync with the record.
 
+To cue a line by hand, pause, move to it with `↑`/`↓`, and press `Enter` the moment the singer
+starts it: playback resumes from the start of that line.
+
 | Key | Does |
 | --- | --- |
 | `Space` | play / pause |
@@ -104,7 +107,7 @@ During an intro or an instrumental break of 5s or more, the `♪` counts down to
 | `↑`/`k`, `↓`/`j` | jump to the previous / next line |
 | `,` / `.` | nudge the clock ∓0.1s, for fine sync |
 | `<` / `>` | nudge the clock ∓0.5s |
-| `Enter` | snap the clock to the nearest line; tap it as a line is sung |
+| `Enter` | paused: start the current line now; playing: snap to the nearest line |
 | `0` / `r` | restart at `00:00`, paused |
 | `c` | replay the countdown |
 | `?` | show every key |

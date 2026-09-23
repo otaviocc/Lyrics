@@ -114,6 +114,13 @@ impl App {
     }
 
     fn tap_sync(&mut self, at: Instant) {
+        if matches!(self.mode, Mode::Countdown { .. }) {
+            return;
+        }
+        if !self.clock.is_playing() {
+            self.start_current_line(at);
+            return;
+        }
         let now = self.clock.now(at);
         let now_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
         let after = self.song.lines.partition_point(|line| line.at_ms <= now_ms);
@@ -137,6 +144,16 @@ impl App {
         self.set_notice(format!("synced {}", format_offset(correction)), at);
     }
 
+    fn start_current_line(&mut self, at: Instant) {
+        if let Some(line) = self
+            .current_index(self.clock.now(at))
+            .and_then(|index| self.song.lines.get(index))
+        {
+            self.clock.set(at, Duration::from_millis(line.at_ms));
+        }
+        self.clock.play(at);
+    }
+
     pub fn apply(&mut self, action: Action, at: Instant) {
         match action {
             Action::TogglePlay => {
@@ -158,10 +175,12 @@ impl App {
                 self.set_notice(format!("+{}s", by.as_secs()), at);
             }
             Action::PreviousLine => {
-                if let Some(index) = self.current_index(self.clock.now(at))
-                    && let Some(line) = self.song.lines.get(index)
-                {
-                    self.clock.set(at, Duration::from_millis(line.at_ms));
+                if let Some(index) = self.current_index(self.clock.now(at)) {
+                    let target = index
+                        .checked_sub(1)
+                        .and_then(|previous| self.song.lines.get(previous))
+                        .map_or(Duration::ZERO, |line| Duration::from_millis(line.at_ms));
+                    self.clock.set(at, target);
                 }
             }
             Action::NextLine => {
@@ -332,9 +351,51 @@ mod tests {
         let mut app = App::new(song(), Theme::default(), false);
         app.clock.set(t(0), Duration::from_millis(6_000));
         app.apply(Action::PreviousLine, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(1_000));
+        app.apply(Action::NextLine, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
         app.apply(Action::NextLine, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(10_000));
+    }
+
+    #[test]
+    fn previous_line_steps_up_one_line_per_press() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.clock.set(t(0), Duration::from_millis(10_000));
+        app.apply(Action::PreviousLine, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
+        app.apply(Action::PreviousLine, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(1_000));
+        app.apply(Action::PreviousLine, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::ZERO);
+        app.apply(Action::PreviousLine, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::ZERO);
+    }
+
+    #[test]
+    fn enter_while_paused_starts_the_current_line_now() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.clock.set(t(0), Duration::from_millis(6_200));
+        app.apply(Action::TapSync, t(0));
+        assert!(app.clock.is_playing());
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
+        assert_eq!(app.clock.now(t(2)), Duration::from_millis(7_000));
+    }
+
+    #[test]
+    fn enter_while_paused_before_the_first_line_just_plays() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.apply(Action::TapSync, t(0));
+        assert!(app.clock.is_playing());
+        assert_eq!(app.clock.now(t(0)), Duration::ZERO);
+    }
+
+    #[test]
+    fn enter_during_the_countdown_does_nothing() {
+        let mut app = App::new(song(), Theme::default(), true);
+        app.apply(Action::TapSync, t(0));
+        assert_eq!(app.mode, Mode::Countdown { step: 0 });
+        assert!(!app.clock.is_playing());
     }
 
     #[test]
@@ -359,6 +420,7 @@ mod tests {
     #[test]
     fn tap_sync_snaps_to_the_nearest_line_start_in_either_direction() {
         let mut app = App::new(song(), Theme::default(), false);
+        app.clock.play(t(0));
         app.clock.set(t(0), Duration::from_millis(4_600));
         app.apply(Action::TapSync, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
@@ -371,8 +433,9 @@ mod tests {
     }
 
     #[test]
-    fn tap_sync_before_the_first_line_snaps_to_it() {
+    fn tap_sync_while_playing_the_intro_snaps_to_the_first_line() {
         let mut app = App::new(song(), Theme::default(), false);
+        app.clock.play(t(0));
         app.apply(Action::TapSync, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(1_000));
     }
@@ -396,6 +459,7 @@ mod tests {
             Theme::default(),
             false,
         );
+        app.clock.play(t(0));
         app.clock.set(t(0), Duration::from_secs(3));
         app.apply(Action::TapSync, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_secs(3));
