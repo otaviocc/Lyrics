@@ -93,6 +93,9 @@ you press Space at the same moment you hit play in your music player. `--counter
 `3, 2, 1, PLAY` countdown first, so you can time that press exactly, and starts the clock the
 instant `PLAY` appears.
 
+During an intro or an instrumental break of 5s or more, the `♪` counts down to the next line
+(`♪ 0:12`), so you can tell at a glance whether the clock is still in sync with the record.
+
 | Key | Does |
 | --- | --- |
 | `Space` | play / pause |
@@ -100,6 +103,8 @@ instant `PLAY` appears.
 | `Shift-←`/`H`, `Shift-→`/`L` | seek 10s back / forward |
 | `↑`/`k`, `↓`/`j` | jump to the previous / next line |
 | `,` / `.` | nudge the clock ∓0.1s, for fine sync |
+| `<` / `>` | nudge the clock ∓0.5s |
+| `Enter` | snap the clock to the nearest line; tap it as a line is sung |
 | `0` / `r` | restart at `00:00`, paused |
 | `c` | replay the countdown |
 | `?` | show every key |

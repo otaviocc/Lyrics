@@ -24,6 +24,9 @@ use crate::tui::app::{App, Mode};
 use crate::tui::{bigtext, help};
 
 const HINTS: &str = "? keys";
+/// The fine-sync keys, kept on the status bar (not only behind `?`) because lining the clock
+/// up is the thing a listener does most while a song plays.
+const SYNC_HINTS: &str = ", . ±0.1s · < > ±0.5s · Enter sync";
 const HINT_GAP: usize = 2;
 const EDGE_PAD: u16 = 1;
 const SEPARATOR: &str = " · ";
@@ -59,11 +62,12 @@ impl Widget for Screen<'_> {
         // Computed once and threaded through: `content()` and `statusbar()` both need "which
         // line is current right now", and it's the same answer for both on a given frame.
         let current_index = self.app.current_index(self.elapsed);
+        let break_remaining = self.app.break_remaining(self.elapsed);
 
         header(header_row, buf, self.app);
         rule(top_rule, buf, self.app.theme.style(Element::Hint));
         progress(top_rule, buf, self.app, self.elapsed);
-        content(content_rows, buf, self.app, current_index);
+        content(content_rows, buf, self.app, current_index, break_remaining);
         rule(bottom_rule, buf, self.app.theme.style(Element::Hint));
         statusbar(status_row, buf, self.app, self.elapsed, current_index);
 
@@ -331,7 +335,13 @@ fn display_text(app: &App, index: usize) -> String {
         .unwrap_or_default()
 }
 
-fn content(area: Rect, buf: &mut Buffer, app: &App, current_index: Option<usize>) {
+fn content(
+    area: Rect,
+    buf: &mut Buffer,
+    app: &App,
+    current_index: Option<usize>,
+    break_remaining: Option<Duration>,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -344,10 +354,14 @@ fn content(area: Rect, buf: &mut Buffer, app: &App, current_index: Option<usize>
     let width = usize::from(area.width.saturating_sub(CONTENT_PAD.saturating_mul(2)));
     let half = usize::from(area.height).saturating_div(2);
 
-    let current_wrapped = current_index.map_or_else(
-        || vec![BREAK_GLYPH.to_owned()],
-        |index| wrap(&display_text(app, index), width),
-    );
+    // In a long enough break the timer rides on the `♪` row itself: the current row is where
+    // the eye already is, and a bare `0:12` next to the note needs no words to read as "until
+    // the singing resumes".
+    let current_wrapped = match (break_remaining, current_index) {
+        (Some(left), _) => vec![format!("{BREAK_GLYPH} {}", format_remaining(left))],
+        (None, None) => vec![BREAK_GLYPH.to_owned()],
+        (None, Some(index)) => wrap(&display_text(app, index), width),
+    };
     let current_mid = current_wrapped.len().saturating_sub(1).saturating_div(2);
 
     // Above: walk earlier lines until enough rows are built to cover from the center row up
@@ -356,16 +370,13 @@ fn content(area: Rect, buf: &mut Buffer, app: &App, current_index: Option<usize>
     let mut rows_above = current_mid;
     let mut cursor = current_index;
     let mut steps_up = 0usize;
+    // Before the first line (`cursor` is `None`) nothing has been sung yet, so nothing goes
+    // above the `♪`: line 0 is the first line *below* it, and drawing it here too would show it
+    // twice.
     while rows_above < half.saturating_add(SLACK_ROWS) {
-        let Some(index) = cursor
-            .and_then(|i| i.checked_sub(1))
-            .or_else(|| (cursor.is_none()).then_some(0))
-        else {
+        let Some(index) = cursor.and_then(|i| i.checked_sub(1)) else {
             break;
         };
-        if cursor.is_none() && !above.is_empty() {
-            break;
-        }
         cursor = Some(index);
         steps_up = steps_up.saturating_add(1);
         let distance = if steps_up <= 2 {
@@ -378,9 +389,6 @@ fn content(area: Rect, buf: &mut Buffer, app: &App, current_index: Option<usize>
         for row_text in wrapped.into_iter().rev() {
             above.push((row_text, distance));
         }
-        if index == 0 {
-            break;
-        }
     }
     above.reverse();
 
@@ -391,9 +399,6 @@ fn content(area: Rect, buf: &mut Buffer, app: &App, current_index: Option<usize>
         .saturating_sub(1);
     let mut next_index = current_index.map_or(0, |i| i.saturating_add(1));
     let mut steps_down = 0usize;
-    if current_index.is_none() {
-        next_index = 0;
-    }
     while rows_below < half.saturating_add(SLACK_ROWS) {
         if next_index >= app.song.lines.len() {
             break;
@@ -486,7 +491,7 @@ fn statusbar(
     current_index: Option<usize>,
 ) {
     let area = padded(area);
-    if let Some(notice) = app.notice(std::time::Instant::now()) {
+    let text = if let Some(notice) = app.notice(std::time::Instant::now()) {
         row(
             area,
             buf,
@@ -494,20 +499,54 @@ fn statusbar(
             notice,
             app.theme.style(Element::StatusNotice),
         );
-        return;
-    }
-
-    let total_lines = app.song.lines.len();
-    let position = current_index.map_or(0, |index| index.saturating_add(1));
-    let playing = matches!(app.mode, Mode::Playing) && app.clock.is_playing();
-    let symbol = if playing { "▶" } else { "❚❚" };
-    let clock_text = format_clock(elapsed);
-    let text = if matches!(app.mode, Mode::Countdown { .. }) {
-        String::from("counting down…")
+        notice.to_owned()
     } else {
-        format!("{symbol} {clock_text}{SEPARATOR}line {position}/{total_lines}")
+        let total_lines = app.song.lines.len();
+        let position = current_index.map_or(0, |index| index.saturating_add(1));
+        let playing = matches!(app.mode, Mode::Playing) && app.clock.is_playing();
+        let symbol = if playing { "▶" } else { "❚❚" };
+        let clock_text = format_clock(elapsed);
+        let text = if matches!(app.mode, Mode::Countdown { .. }) {
+            String::from("counting down…")
+        } else {
+            format!("{symbol} {clock_text}{SEPARATOR}line {position}/{total_lines}")
+        };
+        row(area, buf, area.x, &text, app.theme.style(Element::Status));
+        text
     };
-    row(area, buf, area.x, &text, app.theme.style(Element::Status));
+
+    // Dropped whole rather than truncated when the terminal is too narrow, like `HINTS` in
+    // the header: half a hint is worse than none.
+    let hints_width = SYNC_HINTS.width();
+    if text
+        .width()
+        .saturating_add(HINT_GAP)
+        .saturating_add(hints_width)
+        <= usize::from(area.width)
+    {
+        let hint_x = area
+            .right()
+            .saturating_sub(u16::try_from(hints_width).unwrap_or(area.width));
+        row(
+            area,
+            buf,
+            hint_x,
+            SYNC_HINTS,
+            app.theme.style(Element::Hint),
+        );
+    }
+}
+
+/// `0:12`, rounded *up*: the counter reads `0:01` through the last second and the line
+/// arrives as it would tick to `0:00`, the way a countdown to an event should.
+fn format_remaining(left: Duration) -> String {
+    let millis = left.as_millis();
+    let secs = millis.saturating_add(999).saturating_div(1_000);
+    format!(
+        "{}:{:02}",
+        secs.saturating_div(60),
+        secs.checked_rem(60).unwrap_or(0)
+    )
 }
 
 fn format_clock(elapsed: Duration) -> String {
@@ -707,6 +746,96 @@ mod tests {
     #[test]
     fn wrap_of_zero_width_returns_the_text_unwrapped_rather_than_looping() {
         assert_eq!(wrap("hi", 0), vec!["hi"]);
+    }
+
+    #[test]
+    fn the_status_bar_shows_the_sync_keys_when_there_is_room() {
+        let backend = TestBackend::new(80, 11);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = app();
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::ZERO))
+            .unwrap();
+        let status = row_text(terminal.backend().buffer(), 10);
+        assert!(status.contains("line 1/"), "{status:?}");
+        assert!(status.trim_end().ends_with(SYNC_HINTS), "{status:?}");
+    }
+
+    #[test]
+    fn the_status_bar_drops_the_sync_keys_whole_on_a_narrow_screen() {
+        let backend = TestBackend::new(40, 11);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = app();
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::ZERO))
+            .unwrap();
+        let status = row_text(terminal.backend().buffer(), 10);
+        assert!(status.contains("line 1/"), "{status:?}");
+        assert!(!status.contains("±"), "{status:?}");
+    }
+
+    #[test]
+    fn an_intro_shows_the_countdown_beside_the_break_glyph() {
+        let mut song = song();
+        for line in &mut song.lines {
+            line.at_ms = line.at_ms.saturating_add(12_000);
+        }
+        let app = App::new(song, Theme::default(), false);
+        let backend = TestBackend::new(40, 11);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::from_millis(1_500)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // Center row of the content area is y=5 (see the centering test above).
+        assert!(
+            row_text(buffer, 5).contains(&format!("{BREAK_GLYPH} 0:11")),
+            "{:?}",
+            row_text(buffer, 5)
+        );
+        assert!(row_text(buffer, 6).contains("Line zero"));
+    }
+
+    #[test]
+    fn before_the_first_line_nothing_is_drawn_above_the_break_glyph() {
+        let mut song = song();
+        for line in &mut song.lines {
+            line.at_ms = line.at_ms.saturating_add(12_000);
+        }
+        let app = App::new(song, Theme::default(), false);
+        let backend = TestBackend::new(40, 11);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::ZERO))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..11).map(|y| row_text(buffer, y)).collect();
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("Line zero")).count(),
+            1,
+            "{rows:#?}"
+        );
+        assert!((2..5).all(|y| rows[y].trim().is_empty()), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_lyric_line_shows_no_countdown() {
+        let backend = TestBackend::new(40, 11);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = app();
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::from_millis(2_000)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!((0..11).all(|y| !row_text(buffer, y).contains(BREAK_GLYPH)));
+    }
+
+    #[test]
+    fn format_remaining_rounds_up_to_the_second() {
+        assert_eq!(format_remaining(Duration::from_millis(10_500)), "0:11");
+        assert_eq!(format_remaining(Duration::from_millis(1)), "0:01");
+        assert_eq!(format_remaining(Duration::from_secs(75)), "1:15");
     }
 
     #[test]
