@@ -14,7 +14,7 @@ const MIN_WIDTH: u16 = 40;
 const MAX_WIDTH: u16 = 64;
 const HEIGHT_FRACTION: u16 = 70;
 const MIN_HEIGHT: u16 = 10;
-const MAX_HEIGHT: u16 = 20;
+const MAX_HEIGHT: u16 = 22;
 const KEYS_COLUMN: usize = 18;
 
 pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
@@ -36,6 +36,8 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Up k", "jump to the previous line"),
             ("Down j", "jump to the next line"),
             (", .", "nudge -0.1s · +0.1s, for fine sync"),
+            ("< >", "nudge -0.5s · +0.5s"),
+            ("Enter", "snap to the nearest line, tap as it's sung"),
         ],
     ),
     (
@@ -105,6 +107,16 @@ mod tests {
     }
 
     #[test]
+    fn a_tall_enough_screen_shows_every_row_without_clipping() {
+        let rows = u16::try_from(lines(&Theme::default()).len()).unwrap();
+        // Plus the top and bottom border.
+        assert!(
+            rows.saturating_add(2) <= MAX_HEIGHT,
+            "{rows} rows no longer fit MAX_HEIGHT"
+        );
+    }
+
+    #[test]
     fn every_key_it_advertises_is_actually_bound() {
         for (_, keys) in SECTIONS {
             for (keys, _) in *keys {
@@ -123,6 +135,7 @@ mod tests {
         match token {
             "Space" => KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
             "Esc" => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            "Enter" => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             "Left" => KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
             "Right" => KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
             "Up" => KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),

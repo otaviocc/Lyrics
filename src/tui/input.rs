@@ -16,8 +16,11 @@ pub enum Action {
     SeekForward(bool),
     PreviousLine,
     NextLine,
-    NudgeEarlier,
-    NudgeLater,
+    /// `true` for the short (100ms) nudge, `false` for the long (500ms) one.
+    NudgeEarlier(bool),
+    NudgeLater(bool),
+    /// Snap the clock to the nearest line's timestamp, pressed as that line is sung.
+    TapSync,
     Restart,
     ReplayCountdown,
     ToggleHelp,
@@ -52,8 +55,13 @@ pub fn action(key: &KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('L') => Some(Action::SeekForward(false)),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::PreviousLine),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::NextLine),
-        KeyCode::Char(',') => Some(Action::NudgeEarlier),
-        KeyCode::Char('.') => Some(Action::NudgeLater),
+        KeyCode::Char(',') => Some(Action::NudgeEarlier(true)),
+        KeyCode::Char('.') => Some(Action::NudgeLater(true)),
+        // Matched on the character alone: terminals disagree on whether `<`/`>` arrive with
+        // SHIFT set, and either way the listener pressed the same key.
+        KeyCode::Char('<') => Some(Action::NudgeEarlier(false)),
+        KeyCode::Char('>') => Some(Action::NudgeLater(false)),
+        KeyCode::Enter => Some(Action::TapSync),
         KeyCode::Char('0' | 'r') => Some(Action::Restart),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char('c') => Some(Action::ReplayCountdown),
@@ -135,11 +143,31 @@ mod tests {
     fn nudge_keys_resolve() {
         assert_eq!(
             action(&key(KeyCode::Char(',')), Mode::Playing),
-            Some(Action::NudgeEarlier)
+            Some(Action::NudgeEarlier(true))
         );
         assert_eq!(
             action(&key(KeyCode::Char('.')), Mode::Playing),
-            Some(Action::NudgeLater)
+            Some(Action::NudgeLater(true))
+        );
+        for event in [key(KeyCode::Char('<')), shift(KeyCode::Char('<'))] {
+            assert_eq!(
+                action(&event, Mode::Playing),
+                Some(Action::NudgeEarlier(false))
+            );
+        }
+        for event in [key(KeyCode::Char('>')), shift(KeyCode::Char('>'))] {
+            assert_eq!(
+                action(&event, Mode::Playing),
+                Some(Action::NudgeLater(false))
+            );
+        }
+    }
+
+    #[test]
+    fn enter_taps_sync() {
+        assert_eq!(
+            action(&key(KeyCode::Enter), Mode::Playing),
+            Some(Action::TapSync)
         );
     }
 

@@ -15,8 +15,12 @@ pub const COUNTDOWN_STEP: Duration = Duration::from_secs(1);
 /// Seek amounts bound to the short/long seek keys.
 const SHORT_SEEK: Duration = Duration::from_secs(5);
 const LONG_SEEK: Duration = Duration::from_secs(10);
-/// Fine-tune nudge, for lining the clock up by ear.
-const NUDGE: Duration = Duration::from_millis(100);
+/// Fine-tune nudges bound to the short/long nudge keys, for lining the clock up by ear.
+const SHORT_NUDGE: Duration = Duration::from_millis(100);
+const LONG_NUDGE: Duration = Duration::from_millis(500);
+/// Breaks shorter than this get no `♪ 0:12` countdown: between two lyric lines a
+/// ticking counter would only flash up and vanish, and there's nothing to re-sync by ear.
+const MIN_BREAK: Duration = Duration::from_secs(5);
 /// How long a transient status notice (like "+5s") stays visible.
 const NOTICE_TTL: Duration = Duration::from_secs(2);
 
@@ -75,6 +79,34 @@ impl App {
         after.checked_sub(1)
     }
 
+    /// Time left until the next line with words, while `t` is in an instrumental stretch: the
+    /// intro before the first line, or a blank (`♪`) timed line. `None` during a lyric, after
+    /// the last one, or when the break is shorter than `MIN_BREAK`.
+    ///
+    /// Measured to the next *non-blank* line, so consecutive blank markers read as one break.
+    #[must_use]
+    pub fn break_remaining(&self, t: Duration) -> Option<Duration> {
+        let current = self.current_index(t);
+        let (start_ms, from) = match current {
+            None => (0, 0),
+            Some(index) => {
+                let line = self.song.lines.get(index)?;
+                if !line.text.trim().is_empty() {
+                    return None;
+                }
+                (line.at_ms, index.saturating_add(1))
+            }
+        };
+        let next = self
+            .song
+            .lines
+            .get(from..)?
+            .iter()
+            .find(|line| !line.text.trim().is_empty())?;
+        let length = Duration::from_millis(next.at_ms.saturating_sub(start_ms));
+        (length >= MIN_BREAK).then(|| Duration::from_millis(next.at_ms).saturating_sub(t))
+    }
+
     #[must_use]
     pub fn notice(&self, at: Instant) -> Option<&str> {
         self.notice
@@ -102,6 +134,33 @@ impl App {
         } else {
             self.mode = Mode::Countdown { step: next };
         }
+    }
+
+    /// Snap the clock to whichever line start is nearest, so one press as a line is sung
+    /// corrects the clock whether it was running early or late. The notice reports the
+    /// correction, never the line itself (invariant 3).
+    fn tap_sync(&mut self, at: Instant) {
+        let now = self.clock.now(at);
+        let now_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
+        let after = self.song.lines.partition_point(|line| line.at_ms <= now_ms);
+        let before = after
+            .checked_sub(1)
+            .and_then(|index| self.song.lines.get(index));
+        let Some(nearest) = [before, self.song.lines.get(after)]
+            .into_iter()
+            .flatten()
+            .min_by_key(|line| line.at_ms.abs_diff(now_ms))
+        else {
+            return;
+        };
+        let target = Duration::from_millis(nearest.at_ms);
+        self.clock.set(at, target);
+        let correction = if target >= now {
+            SignedDuration::Forward(target.saturating_sub(now))
+        } else {
+            SignedDuration::Backward(now.saturating_sub(target))
+        };
+        self.set_notice(format!("synced {}", format_offset(correction)), at);
     }
 
     pub fn apply(&mut self, action: Action, at: Instant) {
@@ -138,8 +197,17 @@ impl App {
                     self.clock.set(at, Duration::from_millis(line.at_ms));
                 }
             }
-            Action::NudgeEarlier => self.clock.seek(at, SignedDuration::Backward(NUDGE)),
-            Action::NudgeLater => self.clock.seek(at, SignedDuration::Forward(NUDGE)),
+            Action::NudgeEarlier(short) => {
+                let by = if short { SHORT_NUDGE } else { LONG_NUDGE };
+                self.clock.seek(at, SignedDuration::Backward(by));
+                self.set_notice(format_offset(SignedDuration::Backward(by)), at);
+            }
+            Action::NudgeLater(short) => {
+                let by = if short { SHORT_NUDGE } else { LONG_NUDGE };
+                self.clock.seek(at, SignedDuration::Forward(by));
+                self.set_notice(format_offset(SignedDuration::Forward(by)), at);
+            }
+            Action::TapSync => self.tap_sync(at),
             Action::Restart => {
                 self.clock.restart();
             }
@@ -157,6 +225,28 @@ impl App {
             Action::Quit => self.quit = true,
         }
     }
+}
+
+/// `+0.5s` / `-1.2s`: a signed offset to the tenth of a second, for the nudge and tap-sync
+/// notices (the whole-second seeks keep their own `+5s` format).
+fn format_offset(offset: SignedDuration) -> String {
+    let (sign, by) = match offset {
+        SignedDuration::Forward(by) => ('+', by),
+        SignedDuration::Backward(by) => ('-', by),
+    };
+    let tenths = by.as_millis().saturating_add(50).saturating_div(100);
+    // A tap within 50ms of the line rounds to zero; a sign on it would claim a correction
+    // the listener can't see.
+    let sign = if tenths == 0 {
+        String::new()
+    } else {
+        sign.to_string()
+    };
+    format!(
+        "{sign}{}.{}s",
+        tenths.saturating_div(10),
+        tenths.checked_rem(10).unwrap_or(0)
+    )
 }
 
 #[cfg(test)]
@@ -278,6 +368,146 @@ mod tests {
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
         app.apply(Action::NextLine, t(0));
         assert_eq!(app.clock.now(t(0)), Duration::from_millis(10_000));
+    }
+
+    #[test]
+    fn nudge_actions_move_the_clock_and_set_a_notice() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.clock.set(t(0), Duration::from_secs(2));
+        app.apply(Action::NudgeEarlier(true), t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(1_900));
+        assert_eq!(app.notice(t(0)), Some("-0.1s"));
+        app.apply(Action::NudgeLater(false), t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(2_400));
+        assert_eq!(app.notice(t(0)), Some("+0.5s"));
+    }
+
+    #[test]
+    fn nudging_backward_saturates_at_zero() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.apply(Action::NudgeEarlier(false), t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::ZERO);
+    }
+
+    #[test]
+    fn tap_sync_snaps_to_the_nearest_line_start_in_either_direction() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.clock.set(t(0), Duration::from_millis(4_600));
+        app.apply(Action::TapSync, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
+        assert_eq!(app.notice(t(0)), Some("synced +0.4s"));
+
+        app.clock.set(t(0), Duration::from_millis(6_200));
+        app.apply(Action::TapSync, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(5_000));
+        assert_eq!(app.notice(t(0)), Some("synced -1.2s"));
+    }
+
+    #[test]
+    fn tap_sync_before_the_first_line_snaps_to_it() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.apply(Action::TapSync, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_millis(1_000));
+    }
+
+    #[test]
+    fn tap_sync_keeps_a_playing_clock_playing() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.clock.play(t(0));
+        app.apply(Action::TapSync, t(4));
+        assert!(app.clock.is_playing());
+        assert_eq!(app.clock.now(t(6)), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn tap_sync_on_an_empty_song_does_nothing() {
+        let mut app = App::new(
+            Song {
+                lines: Vec::new(),
+                ..song()
+            },
+            Theme::default(),
+            false,
+        );
+        app.clock.set(t(0), Duration::from_secs(3));
+        app.apply(Action::TapSync, t(0));
+        assert_eq!(app.clock.now(t(0)), Duration::from_secs(3));
+        assert_eq!(app.notice(t(0)), None);
+    }
+
+    #[test]
+    fn format_offset_rounds_to_tenths() {
+        assert_eq!(
+            format_offset(SignedDuration::Forward(Duration::from_millis(1_250))),
+            "+1.3s"
+        );
+        assert_eq!(
+            format_offset(SignedDuration::Backward(Duration::from_millis(40))),
+            "0.0s"
+        );
+    }
+
+    fn song_with_breaks() -> Song {
+        let line = |at_ms, text: &str| SyncedLine {
+            at_ms,
+            text: text.to_owned(),
+        };
+        Song {
+            lines: vec![
+                line(12_000, "first"),
+                line(14_000, ""),
+                line(16_000, "after a short break"),
+                line(20_000, ""),
+                line(30_000, ""),
+                line(45_000, "after the solo"),
+                line(50_000, ""),
+            ],
+            ..song()
+        }
+    }
+
+    #[test]
+    fn break_remaining_counts_down_the_intro() {
+        let app = App::new(song_with_breaks(), Theme::default(), false);
+        assert_eq!(
+            app.break_remaining(Duration::ZERO),
+            Some(Duration::from_secs(12))
+        );
+        assert_eq!(
+            app.break_remaining(Duration::from_millis(11_500)),
+            Some(Duration::from_millis(500))
+        );
+    }
+
+    #[test]
+    fn break_remaining_is_none_during_a_lyric() {
+        let app = App::new(song_with_breaks(), Theme::default(), false);
+        assert_eq!(app.break_remaining(Duration::from_secs(13)), None);
+    }
+
+    #[test]
+    fn break_remaining_skips_breaks_too_short_to_matter() {
+        let app = App::new(song_with_breaks(), Theme::default(), false);
+        assert_eq!(app.break_remaining(Duration::from_secs(15)), None);
+    }
+
+    #[test]
+    fn break_remaining_reads_consecutive_blank_markers_as_one_break() {
+        let app = App::new(song_with_breaks(), Theme::default(), false);
+        assert_eq!(
+            app.break_remaining(Duration::from_secs(22)),
+            Some(Duration::from_secs(23))
+        );
+        assert_eq!(
+            app.break_remaining(Duration::from_secs(40)),
+            Some(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn break_remaining_is_none_after_the_last_lyric() {
+        let app = App::new(song_with_breaks(), Theme::default(), false);
+        assert_eq!(app.break_remaining(Duration::from_secs(55)), None);
     }
 
     #[test]
