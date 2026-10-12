@@ -211,6 +211,11 @@ fn run(cli: Cli) -> Result<bool> {
             Ok(true)
         }
         Command::Scan { dir, options } => run_scan(&dir, &options),
+        Command::Completions { shell } => {
+            use clap::CommandFactory as _;
+            clap_complete::generate(shell, &mut Cli::command(), "lyrics", &mut std::io::stdout());
+            Ok(true)
+        }
         Command::Stats {
             dir,
             verbose,

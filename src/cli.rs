@@ -166,6 +166,11 @@ pub enum Command {
         #[command(flatten)]
         options: SharedOptions,
     },
+    #[command(about = "Print a shell completion script to stdout")]
+    Completions {
+        #[arg(value_enum, help = "Shell to generate for")]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -336,6 +341,37 @@ mod tests {
             lrclib: ProviderConfig::default(),
             lrcmux: ProviderConfig::default(),
             tui: TuiConfig::default(),
+        }
+    }
+
+    #[test]
+    fn the_command_tree_is_consistent() {
+        use clap::CommandFactory as _;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn completions_cover_every_subcommand() {
+        use clap::CommandFactory as _;
+        let mut out = Vec::new();
+        clap_complete::generate(
+            clap_complete::Shell::Zsh,
+            &mut Cli::command(),
+            "lyrics",
+            &mut out,
+        );
+        let script = String::from_utf8(out).unwrap();
+        for name in [
+            "scan",
+            "track",
+            "stats",
+            "lint",
+            "ebook",
+            "show",
+            "tui",
+            "completions",
+        ] {
+            assert!(script.contains(name), "{name} is missing from the script");
         }
     }
 

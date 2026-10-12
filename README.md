@@ -38,6 +38,17 @@ make install
 
 Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 
+### Shell completions
+
+`lyrics completions <shell>` prints a completion script for `bash`, `zsh`, `fish`, `elvish`,
+or `powershell`. Put it where your shell looks:
+
+```sh
+lyrics completions zsh > ~/.zfunc/_lyrics          # then: fpath+=~/.zfunc; autoload -Uz compinit
+lyrics completions bash > ~/.local/share/bash-completion/completions/lyrics
+lyrics completions fish > ~/.config/fish/completions/lyrics.fish
+```
+
 ## Quick start
 
 ```sh
