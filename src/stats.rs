@@ -21,6 +21,8 @@ pub struct Stats {
     pub missing: u32,
     pub by_extension: BTreeMap<String, u32>,
     pub orphan_paths: Vec<PathBuf>,
+    pub missing_paths: Vec<PathBuf>,
+    pub plain_paths: Vec<PathBuf>,
 }
 
 impl Stats {
@@ -103,8 +105,14 @@ pub fn collect(dir: &Path) -> Stats {
                 SidecarDetail::Instrumental => {
                     stats.instrumental = stats.instrumental.saturating_add(1);
                 }
-                SidecarDetail::Plain => stats.plain = stats.plain.saturating_add(1),
-                SidecarDetail::None => stats.missing = stats.missing.saturating_add(1),
+                SidecarDetail::Plain => {
+                    stats.plain = stats.plain.saturating_add(1);
+                    stats.plain_paths.push(path.to_path_buf());
+                }
+                SidecarDetail::None => {
+                    stats.missing = stats.missing.saturating_add(1);
+                    stats.missing_paths.push(path.to_path_buf());
+                }
             }
 
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -139,6 +147,8 @@ pub fn collect(dir: &Path) -> Stats {
         }
     }
     stats.orphan_paths.sort();
+    stats.missing_paths.sort();
+    stats.plain_paths.sort();
 
     stats
 }
@@ -242,6 +252,19 @@ mod tests {
         assert_eq!(stats.by_extension.get("flac"), Some(&4));
         assert_eq!(stats.by_extension.get("mp3"), Some(&1));
         assert!(stats.orphan_paths.is_empty());
+
+        let names = |paths: &[PathBuf]| -> Vec<String> {
+            paths
+                .iter()
+                .filter_map(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(names(&stats.missing_paths), ["05 Missing.mp3"]);
+        assert_eq!(
+            names(&stats.plain_paths),
+            ["02 Plain.flac", "03 NoTimestamps.flac"]
+        );
     }
 
     #[test]

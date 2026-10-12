@@ -46,8 +46,21 @@ pub enum Command {
         #[arg(help = "Root directory to walk recursively")]
         dir: PathBuf,
 
-        #[arg(short, long, action = clap::ArgAction::Count, help = "List orphaned sidecar paths instead of just counting them")]
+        #[arg(short, long, action = clap::ArgAction::Count, conflicts_with_all = ["missing", "plain"], help = "List orphaned sidecar paths instead of just counting them")]
         verbose: u8,
+
+        #[arg(
+            long,
+            conflicts_with = "plain",
+            help = "List the audio files with no lyrics sidecar, one path per line, and nothing else"
+        )]
+        missing: bool,
+
+        #[arg(
+            long,
+            help = "List the audio files whose only lyrics are a plain .txt, one path per line, and nothing else"
+        )]
+        plain: bool,
     },
     #[command(about = "Check .lrc files for format and sync problems. Read-only: never writes")]
     Lint {

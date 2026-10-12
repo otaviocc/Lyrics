@@ -211,11 +211,27 @@ fn run(cli: Cli) -> Result<bool> {
             Ok(true)
         }
         Command::Scan { dir, options } => run_scan(&dir, &options),
-        Command::Stats { dir, verbose } => {
+        Command::Stats {
+            dir,
+            verbose,
+            missing,
+            plain,
+        } => {
             if !dir.is_dir() {
                 anyhow::bail!("{} is not a directory", dir.display());
             }
             let census = stats::collect(&dir);
+            if missing || plain {
+                let paths = if missing {
+                    &census.missing_paths
+                } else {
+                    &census.plain_paths
+                };
+                for path in paths {
+                    println!("{}", path.display());
+                }
+                return Ok(true);
+            }
             print!("{}", census.render());
             if verbose > 0 && !census.orphan_paths.is_empty() {
                 println!("\nOrphaned sidecar paths:");
