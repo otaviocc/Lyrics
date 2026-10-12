@@ -6,7 +6,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Context as _, Result};
 use walkdir::WalkDir;
@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use crate::cli::Options;
 use crate::http::{Client, LyricsRecord, pick_best_candidate};
 use crate::meta::{self, ResolvedMeta, TrackMeta};
+use crate::missing::MissingCache;
 use crate::progress::Progress;
 use crate::sidecar::{self, SidecarState};
 
@@ -24,6 +25,7 @@ pub enum Outcome {
     Plain,
     Instrumental,
     Skipped,
+    Deferred,
     Missing,
     Untagged,
     NoChange,
@@ -38,6 +40,7 @@ impl Outcome {
             Self::Plain => "plain",
             Self::Instrumental => "instrumental",
             Self::Skipped => "skipped",
+            Self::Deferred => "deferred",
             Self::Missing => "missing",
             Self::Untagged => "untagged",
             Self::NoChange => "no-change",
@@ -48,7 +51,7 @@ impl Outcome {
     pub const fn verbosity(self) -> u8 {
         match self {
             Self::Fetched | Self::Upgraded | Self::Plain | Self::Instrumental => 0,
-            Self::Skipped | Self::Missing | Self::Untagged | Self::NoChange => 1,
+            Self::Skipped | Self::Deferred | Self::Missing | Self::Untagged | Self::NoChange => 1,
         }
     }
 }
@@ -69,6 +72,7 @@ pub struct Summary {
     pub plain: u32,
     pub instrumental: u32,
     pub skipped: u32,
+    pub deferred: u32,
     pub missing: u32,
     pub untagged: u32,
     pub errors: u32,
@@ -82,6 +86,7 @@ impl Summary {
             Outcome::Plain => self.plain = self.plain.saturating_add(1),
             Outcome::Instrumental => self.instrumental = self.instrumental.saturating_add(1),
             Outcome::Skipped => self.skipped = self.skipped.saturating_add(1),
+            Outcome::Deferred => self.deferred = self.deferred.saturating_add(1),
             Outcome::Missing => self.missing = self.missing.saturating_add(1),
             Outcome::Untagged => self.untagged = self.untagged.saturating_add(1),
             Outcome::NoChange => {}
@@ -91,12 +96,13 @@ impl Summary {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "synced: {}  upgraded: {}  plain: {}  instrumental: {}  skipped: {}  missing: {}  untagged: {}  errors: {}",
+            "synced: {}  upgraded: {}  plain: {}  instrumental: {}  skipped: {}  deferred: {}  missing: {}  untagged: {}  errors: {}",
             self.synced,
             self.upgraded,
             self.plain,
             self.instrumental,
             self.skipped,
+            self.deferred,
             self.missing,
             self.untagged,
             self.errors
@@ -127,7 +133,12 @@ fn lookup(client: &mut Client, meta: &TrackMeta, opts: &Options) -> Result<Optio
     Ok(record)
 }
 
-pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result<Outcome> {
+pub fn process_track(
+    client: &mut Client,
+    path: &Path,
+    opts: &Options,
+    cache: &mut MissingCache,
+) -> Result<Outcome> {
     let resolved = meta::resolve(path, opts.path_fallback);
     let meta = match resolved {
         ResolvedMeta::Untagged => return Ok(Outcome::Untagged),
@@ -155,6 +166,18 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
         return Ok(Outcome::Skipped);
     }
 
+    let provider = opts.provider.spec().name;
+    if !opts.force
+        && cache.is_fresh(
+            path,
+            provider,
+            opts.retry_missing_window(),
+            SystemTime::now(),
+        )
+    {
+        return Ok(Outcome::Deferred);
+    }
+
     let mut record = lookup(client, &meta, opts)?;
 
     if record.is_none()
@@ -174,8 +197,10 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
     }
 
     let Some(record) = record else {
+        cache.record_miss(path, provider, SystemTime::now());
         return Ok(Outcome::Missing);
     };
+    cache.forget(path);
 
     if let Some(synced) = record.synced_lyrics.filter(|s| !s.trim().is_empty()) {
         let outcome = if state == SidecarState::Plain {
@@ -209,6 +234,7 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
         return Ok(Outcome::NoChange);
     }
 
+    cache.record_miss(path, provider, SystemTime::now());
     Ok(Outcome::Missing)
 }
 
@@ -228,9 +254,10 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> 
     let mut summary = Summary::default();
     let paths = walk_audio_files(dir);
     let mut progress = Progress::for_scan(opts, paths.len());
+    let mut cache = MissingCache::load(opts.missing_cache.clone());
 
     for path in paths {
-        match process_track(client, &path, opts) {
+        match process_track(client, &path, opts, &mut cache) {
             Ok(outcome) => {
                 summary.record(outcome);
                 progress.clear();
@@ -245,6 +272,9 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> 
         progress.tick(&summary, Instant::now());
     }
     progress.finish();
+    if !opts.dry_run {
+        cache.save()?;
+    }
 
     Ok(summary)
 }
@@ -361,6 +391,7 @@ mod tests {
         }
         for outcome in [
             Outcome::Skipped,
+            Outcome::Deferred,
             Outcome::Missing,
             Outcome::Untagged,
             Outcome::NoChange,

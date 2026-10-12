@@ -13,6 +13,8 @@ use crate::provider::ProviderKind;
 pub const DEFAULT_DURATION_TOLERANCE: u32 = 2;
 pub const DEFAULT_DELAY_MS: u64 = 300;
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
+pub const DEFAULT_RETRY_MISSING_AFTER_DAYS: u32 = 30;
+const SECONDS_PER_DAY: u64 = 86_400;
 
 #[derive(Parser, Debug)]
 #[command(name = "lyrics", version, about, long_about = None)]
@@ -206,6 +208,13 @@ pub struct SharedOptions {
     )]
     pub duration_tolerance: Option<u32>,
 
+    #[arg(
+        long,
+        value_name = "DAYS",
+        help = "Days to wait before asking the provider again about a track it had no lyrics for. 0 disables the cache. [default: 30]"
+    )]
+    pub retry_missing_after: Option<u32>,
+
     #[arg(long, help = "Report planned actions; write nothing to disk")]
     pub dry_run: bool,
 
@@ -277,8 +286,19 @@ impl SharedOptions {
             ProviderKind::Lrcmux => config.lrcmux.user_agent.as_deref(),
         };
 
+        let retry_missing_after = self
+            .retry_missing_after
+            .or(config.options.retry_missing_after)
+            .unwrap_or(DEFAULT_RETRY_MISSING_AFTER_DAYS);
+
         Options {
             force: self.force,
+            retry_missing_after,
+            missing_cache: if retry_missing_after == 0 {
+                None
+            } else {
+                crate::missing::default_path()
+            },
             path_fallback: self.path_fallback || config.options.path_fallback.unwrap_or(false),
             no_search_fallback: self.no_search_fallback
                 || config.options.no_search_fallback.unwrap_or(false),
@@ -315,6 +335,8 @@ impl SharedOptions {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Options {
     pub force: bool,
+    pub retry_missing_after: u32,
+    pub missing_cache: Option<PathBuf>,
     pub path_fallback: bool,
     pub no_search_fallback: bool,
     pub no_marker_fallback: bool,
@@ -328,6 +350,15 @@ pub struct Options {
     pub delay_ms: u64,
     pub max_retries: u32,
     pub user_agent: Option<String>,
+}
+
+impl Options {
+    #[must_use]
+    pub fn retry_missing_window(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            u64::from(self.retry_missing_after).saturating_mul(SECONDS_PER_DAY),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +415,33 @@ mod tests {
         assert_eq!(resolved.provider, ProviderKind::Lrclib);
         assert!(!resolved.path_fallback);
         assert!(resolved.user_agent.is_none());
+    }
+
+    #[test]
+    fn the_miss_cache_defaults_to_thirty_days_and_zero_turns_it_off() {
+        let resolved = SharedOptions::default().resolve(&Config::default());
+        assert_eq!(
+            resolved.retry_missing_after,
+            DEFAULT_RETRY_MISSING_AFTER_DAYS
+        );
+        assert_eq!(
+            resolved.retry_missing_window(),
+            std::time::Duration::from_secs(30 * 86_400)
+        );
+
+        let off = SharedOptions {
+            retry_missing_after: Some(0),
+            ..SharedOptions::default()
+        }
+        .resolve(&Config::default());
+        assert_eq!(off.retry_missing_after, 0);
+        assert!(off.missing_cache.is_none());
+
+        let from_config = SharedOptions::default().resolve(&config_with(ConfigOptions {
+            retry_missing_after: Some(7),
+            ..ConfigOptions::default()
+        }));
+        assert_eq!(from_config.retry_missing_after, 7);
     }
 
     #[test]

@@ -15,6 +15,7 @@ use lyrics::config::{self, Config};
 use lyrics::ebook::{self, BookOptions};
 use lyrics::http::{Client, ClientConfig, LyricsRecord};
 use lyrics::lrc::{self, Severity};
+use lyrics::missing::MissingCache;
 use lyrics::theme;
 use lyrics::tui::{self, app::Song};
 use lyrics::{runner, stats};
@@ -144,6 +145,7 @@ fn run_scan(dir: &Path, options: &SharedOptions) -> Result<bool> {
         .saturating_add(summary.plain)
         .saturating_add(summary.instrumental)
         .saturating_add(summary.skipped)
+        .saturating_add(summary.deferred)
         .saturating_add(summary.missing)
         .saturating_add(summary.untagged);
     let all_failed = summary.errors > 0 && total_processed == 0;
@@ -204,7 +206,11 @@ fn run(cli: Cli) -> Result<bool> {
         Command::Track { file, options } => {
             let options = resolve_options(&options)?;
             let mut client = client_for(&options);
-            let outcome = runner::process_track(&mut client, &file, &options)?;
+            let mut cache = MissingCache::load(options.missing_cache.clone());
+            let outcome = runner::process_track(&mut client, &file, &options, &mut cache)?;
+            if !options.dry_run {
+                cache.save()?;
+            }
             if !options.quiet {
                 println!("{}", runner::report_line(outcome, &file));
             }

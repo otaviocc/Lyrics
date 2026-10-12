@@ -65,8 +65,11 @@ lyrics ebook ~/Music -o Lyrics.epub                                    # bind yo
 `show` looks up lyrics by artist and track name (no audio file required) and displays them in a
 pager. Timestamps are dimmed by default; pass `--no-color` to disable that.
 
-Run it again whenever you like: already-synced tracks are skipped, and anything still missing
-gets tried again in case it's shown up since.
+Run it again whenever you like: already-synced tracks are skipped. A track the provider had
+nothing for is remembered in `~/.cache/lyrics/missing.json` (or under `$XDG_CACHE_HOME`) and
+reported as `deferred` instead of being asked about again for 30 days; `--retry-missing-after
+<days>` changes that window, `0` turns the cache off, and `--force` ignores it. Retagging the
+file, switching provider, or the file's mtime changing all make it eligible again.
 
 Want to see what would happen first?
 
@@ -210,6 +213,7 @@ Selection
   --no-search-fallback      Don't fall back to a fuzzy search when the exact lookup misses
   --no-marker-fallback      Don't retry with title markers like (Acoustic)/[Live] stripped
   --duration-tolerance <S>  Max duration mismatch to still accept a match  [default: 2]
+  --retry-missing-after <D> Days before a known miss is asked about again; 0 disables  [default: 30]
 
 Output
   --dry-run                 Show what would happen; write nothing
@@ -264,7 +268,7 @@ theme = "nord"
 ```
 
 Every value option (`provider`, `delay_ms`, `max_retries`, `duration_tolerance`,
-`user_agent`) and boolean flag (`path_fallback`, `keep_plain`, `no_search_fallback`,
+`retry_missing_after`, `user_agent`) and boolean flag (`path_fallback`, `keep_plain`, `no_search_fallback`,
 `no_marker_fallback`, `no_color`) under `[options]` is supported. `[lrclib]`/`[lrcmux]` accept
 a provider-specific `user_agent` that overrides `[options].user_agent` when that provider is
 selected. `[tui].theme` sets `tui`'s default theme; `--theme` on the command line overrides it
@@ -294,8 +298,9 @@ lyrics track "~/Music/Artist/Album/01 Track.flac" --provider lrcmux
 ## A good citizen
 
 Both providers are free services run by volunteers. `lyrics` identifies itself, keeps requests
-sequential with a short delay between them, and backs off properly if it's ever rate-limited. If
-this tool saves you time, consider supporting [LRCLIB](https://lrclib.net) or
+sequential with a short delay between them, backs off properly if it's ever rate-limited, and
+remembers the tracks a provider had nothing for so a re-scan doesn't ask the same questions
+again. If this tool saves you time, consider supporting [LRCLIB](https://lrclib.net) or
 [lrcmux](https://lrcmux.dev).
 
 ## Credits

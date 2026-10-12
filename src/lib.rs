@@ -9,6 +9,7 @@ pub mod ebook;
 pub mod http;
 pub mod lrc;
 pub mod meta;
+pub mod missing;
 pub mod progress;
 pub mod provider;
 pub mod runner;
