@@ -206,7 +206,7 @@ fn run(cli: Cli) -> Result<bool> {
             let mut client = client_for(&options);
             let outcome = runner::process_track(&mut client, &file, &options)?;
             if !options.quiet {
-                println!("{}", outcome.label());
+                println!("{}", runner::report_line(outcome, &file));
             }
             Ok(true)
         }
