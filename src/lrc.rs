@@ -6,7 +6,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use walkdir::WalkDir;
 
 const KNOWN_METADATA_KEYS: &[&str] = &[
@@ -383,14 +383,10 @@ fn is_lrc_file(path: &Path) -> bool {
 }
 
 pub fn synced_files(dir: &Path) -> Result<Vec<(PathBuf, Synced)>> {
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?;
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && is_lrc_file(path))
-        .collect();
-    paths.sort();
+    if !dir.is_dir() {
+        bail!("{} is not a directory", dir.display());
+    }
+    let (paths, _) = resolve_lrc_paths(&[dir.to_path_buf()]);
 
     Ok(paths
         .into_iter()
@@ -703,20 +699,25 @@ mod tests {
     }
 
     #[test]
-    fn synced_files_keeps_only_top_level_lrc_files_with_timed_lines() {
+    fn synced_files_keeps_only_lrc_files_with_timed_lines_and_walks_into_subfolders() {
         let tmp = tempfile::tempdir().unwrap();
         folder(tmp.path());
 
         let found = synced_files(tmp.path()).unwrap();
         let names: Vec<String> = found
             .iter()
-            .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+            .map(|(path, _)| {
+                path.strip_prefix(tmp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
 
         assert_eq!(
             names,
-            vec!["01 First.lrc", "02 Second.lrc"],
-            "a .txt, an untimed .lrc, an instrumental marker and a nested file must all drop out"
+            vec!["01 First.lrc", "02 Second.lrc", "nested/06 Deep.lrc"],
+            "a .txt, an untimed .lrc and an instrumental marker drop out; a nested file stays"
         );
     }
 
@@ -726,7 +727,7 @@ mod tests {
         folder(tmp.path());
 
         let found = synced_files(tmp.path()).unwrap();
-        let (_, second) = found.last().unwrap();
+        let (_, second) = found.get(1).unwrap();
 
         assert_eq!(second.title.as_deref(), Some("Second"));
         assert_eq!(second.artist.as_deref(), Some("A Band"));

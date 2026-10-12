@@ -27,7 +27,8 @@ const ELIDED: &str = "…";
 const CONTENT_PAD: u16 = 2;
 const BREAK_GLYPH: &str = "♪";
 const SLACK_ROWS: usize = 4;
-const PICKER_HINTS: &str = "Enter play · Tab close";
+const PICKER_HINTS: &str = "Enter play · / filter · Tab close";
+const NO_MATCH: &str = "no match";
 
 pub fn draw(frame: &mut Frame, app: &App, elapsed: Duration) {
     frame.render_widget(Screen { app, elapsed }, frame.area());
@@ -119,7 +120,11 @@ fn header(area: Rect, buf: &mut Buffer, app: &App) {
 
     let mut segments = vec![String::from("lyrics")];
     if let Some(entries) = app.browsing() {
-        segments.push(format!("{} synced", entries.len()));
+        if entries.is_filtered() {
+            segments.push(format!("{} of {} synced", entries.len(), entries.total()));
+        } else {
+            segments.push(format!("{} synced", entries.len()));
+        }
     } else {
         if let Some(artist) = &app.song.artist {
             segments.push(artist.clone());
@@ -472,7 +477,12 @@ fn statusbar(
 ) {
     let area = padded(area);
     if let Some(entries) = app.browsing() {
-        let text = format!("{}/{}", entries.selected().saturating_add(1), entries.len());
+        let position = if entries.is_empty() {
+            0
+        } else {
+            entries.selected().saturating_add(1)
+        };
+        let text = format!("{position}/{}", entries.len());
         row(area, buf, area.x, &text, app.theme.style(Element::Status));
         right_hint(area, buf, app, text.width(), PICKER_HINTS);
         return;
@@ -546,8 +556,20 @@ fn overlay_frame(area: Rect, buf: &mut Buffer, app: &App, size: Size, title: &st
 
 fn picker_overlay(area: Rect, buf: &mut Buffer, app: &App, entries: &Picker) {
     let size = picker::outer(area.as_size(), entries.len());
-    let inner = overlay_frame(area, buf, app, size, picker::TITLE);
+    let title = picker::title(entries.query(), app.mode == Mode::Filter);
+    let inner = overlay_frame(area, buf, app, size, &title);
     if inner.is_empty() {
+        return;
+    }
+    if entries.is_empty() {
+        row_at(
+            inner,
+            buf,
+            inner.x,
+            inner.y,
+            NO_MATCH,
+            app.theme.style(Element::Hint),
+        );
         return;
     }
 
@@ -600,6 +622,7 @@ mod tests {
         Song {
             title: String::from("One"),
             artist: Some(String::from("Metallica")),
+            group: None,
             lines: vec![
                 SyncedLine {
                     at_ms: 0,
@@ -860,6 +883,7 @@ mod tests {
             Song {
                 title: String::from("Blackened"),
                 artist: Some(String::from("Metallica")),
+                group: None,
                 lines: vec![SyncedLine {
                     at_ms: 0,
                     text: String::from("Blackened line"),
@@ -868,6 +892,7 @@ mod tests {
             Song {
                 title: String::from("Harvester of Sorrow"),
                 artist: None,
+                group: None,
                 lines: vec![SyncedLine {
                     at_ms: 0,
                     text: String::from("Harvester line"),
@@ -962,6 +987,44 @@ mod tests {
         let status = row_text(terminal.backend().buffer(), 13);
         assert!(status.contains("1/2"), "{status}");
         assert!(!status.contains("line "), "{status}");
+    }
+
+    #[test]
+    fn a_filter_shows_its_query_in_the_title_and_the_narrowed_count_in_the_header() {
+        let backend = TestBackend::new(60, 14);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = library_app();
+        let now = std::time::Instant::now();
+        app.apply(crate::tui::input::Action::StartFilter, now);
+        app.apply(crate::tui::input::Action::PickerType('h'), now);
+        app.apply(crate::tui::input::Action::PickerType('a'), now);
+        app.apply(crate::tui::input::Action::PickerType('r'), now);
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::ZERO))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..14)
+            .map(|y| row_text(buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(row_text(buffer, 0).contains("1 of 2 synced"), "{screen}");
+        assert!(screen.contains("Lyrics  /har"), "{screen}");
+        assert!(screen.contains("Harvester of Sorrow"), "{screen}");
+        assert!(!screen.contains("Blackened"), "{screen}");
+        assert!(row_text(buffer, 13).contains("1/1"), "{screen}");
+
+        app.apply(crate::tui::input::Action::PickerType('z'), now);
+        terminal
+            .draw(|frame| draw(frame, &app, Duration::ZERO))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..14)
+            .map(|y| row_text(buffer, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("no match"), "{screen}");
+        assert!(row_text(buffer, 13).contains("0/0"), "{screen}");
     }
 
     #[test]

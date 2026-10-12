@@ -103,12 +103,16 @@ is required, `--album` optionally narrows the match) and needs synced lyrics —
 instrumental result is an error. With `--file`, it reads that `.lrc` straight from disk and
 never makes a network request.
 
-`--folder` opens on a list of the synced `.lrc` files in that directory — its immediate
-children only, no recursion — and nothing else: a sidecar with no timed lines, an instrumental
-marker, and a `.txt` are all left out, so everything you can pick is playable. Move with
-`↑`/`↓`, press `Enter` to follow the song under the cursor, and press `Tab` at any time to come
-back to the list and switch to another without leaving the screen. The `▸` marks the one you
-are following. Like `--file`, it never makes a network request.
+`--folder` opens on a list of the synced `.lrc` files under that directory, subfolders
+included, and nothing else: a sidecar with no timed lines, an instrumental marker, and a `.txt`
+are all left out, so everything you can pick is playable. A song from a subfolder is listed
+with its folder first (`Metallica/Ride the Lightning / Metallica — Fade to Black`), so pointing
+`--folder` at a whole artist, or the whole library, still reads. Move with `↑`/`↓`, press
+`Enter` to follow the song under the cursor, and press `Tab` at any time to come back to the
+list and switch to another without leaving the screen. Press `/` and start typing to narrow the
+list to the songs whose label contains what you typed, in any case; `Backspace` erases, `Esc`
+clears the filter, and the filter stays put between picks so the next one starts from it. The
+`▸` marks the one you are following. Like `--file`, it never makes a network request.
 
 The clock is yours to drive, not tied to anything external: it starts paused at `00:00`, and
 you press Space at the same moment you hit play in your music player. `--counter` shows a
@@ -133,6 +137,7 @@ starts it: playback resumes from the start of that line.
 | `0` / `r` | restart at `00:00`, paused |
 | `c` | replay the countdown |
 | `Tab` | open / close the song list (`--folder`) |
+| `/` | in the list: filter it by typing; `Backspace` erases, `Esc` clears |
 | `?` | show every key |
 | `q` / `Esc` / `Ctrl-c` | quit |
 
