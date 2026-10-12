@@ -6,6 +6,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use anyhow::{Context as _, Result};
 use walkdir::WalkDir;
@@ -13,6 +14,7 @@ use walkdir::WalkDir;
 use crate::cli::Options;
 use crate::http::{Client, LyricsRecord, pick_best_candidate};
 use crate::meta::{self, ResolvedMeta, TrackMeta};
+use crate::progress::Progress;
 use crate::sidecar::{self, SidecarState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +43,23 @@ impl Outcome {
             Self::NoChange => "no-change",
         }
     }
+
+    #[must_use]
+    pub const fn verbosity(self) -> u8 {
+        match self {
+            Self::Fetched | Self::Upgraded | Self::Plain | Self::Instrumental => 0,
+            Self::Skipped | Self::Missing | Self::Untagged | Self::NoChange => 1,
+        }
+    }
+}
+
+#[must_use]
+pub fn report_line(outcome: Outcome, path: &Path) -> String {
+    format!("{:<9} {}", outcome.label(), path.display())
+}
+
+pub fn report(outcome: Outcome, path: &Path, opts: &Options) {
+    log(opts, outcome.verbosity(), report_line(outcome, path));
 }
 
 #[derive(Debug, Default)]
@@ -111,10 +130,7 @@ fn lookup(client: &mut Client, meta: &TrackMeta, opts: &Options) -> Result<Optio
 pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result<Outcome> {
     let resolved = meta::resolve(path, opts.path_fallback);
     let meta = match resolved {
-        ResolvedMeta::Untagged => {
-            log(opts, 1, format!("untagged  {}", path.display()));
-            return Ok(Outcome::Untagged);
-        }
+        ResolvedMeta::Untagged => return Ok(Outcome::Untagged),
         ResolvedMeta::Ok(m) => m,
     };
 
@@ -136,7 +152,6 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
 
     let state = sidecar::sidecar_state(path);
     if state == SidecarState::Synced && !opts.force {
-        log(opts, 1, format!("skipped   {}", path.display()));
         return Ok(Outcome::Skipped);
     }
 
@@ -159,7 +174,6 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
     }
 
     let Some(record) = record else {
-        log(opts, 1, format!("missing   {}", path.display()));
         return Ok(Outcome::Missing);
     };
 
@@ -172,23 +186,16 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
         if !opts.dry_run {
             sidecar::write_synced(path, &synced, opts.keep_plain)?;
         }
-        log(
-            opts,
-            0,
-            format!("{:<9} {}", outcome.label(), path.display()),
-        );
         return Ok(outcome);
     }
 
     if let Some(plain) = record.plain_lyrics.filter(|s| !s.trim().is_empty()) {
         if state == SidecarState::Plain && !opts.force {
-            log(opts, 1, format!("no-change {}", path.display()));
             return Ok(Outcome::NoChange);
         }
         if !opts.dry_run {
             sidecar::write_plain(path, &plain)?;
         }
-        log(opts, 0, format!("plain     {}", path.display()));
         return Ok(Outcome::Plain);
     }
 
@@ -197,13 +204,11 @@ pub fn process_track(client: &mut Client, path: &Path, opts: &Options) -> Result
             if !opts.dry_run {
                 sidecar::write_instrumental_marker_if_absent(path)?;
             }
-            log(opts, 0, format!("instrumental {}", path.display()));
             return Ok(Outcome::Instrumental);
         }
         return Ok(Outcome::NoChange);
     }
 
-    log(opts, 1, format!("missing   {}", path.display()));
     Ok(Outcome::Missing)
 }
 
@@ -221,16 +226,25 @@ pub fn walk_audio_files(dir: &Path) -> Vec<PathBuf> {
 
 pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> {
     let mut summary = Summary::default();
+    let paths = walk_audio_files(dir);
+    let mut progress = Progress::for_scan(opts, paths.len());
 
-    for path in walk_audio_files(dir) {
+    for path in paths {
         match process_track(client, &path, opts) {
-            Ok(outcome) => summary.record(outcome),
+            Ok(outcome) => {
+                summary.record(outcome);
+                progress.clear();
+                report(outcome, &path, opts);
+            }
             Err(err) => {
                 summary.errors = summary.errors.saturating_add(1);
+                progress.clear();
                 eprintln!("error     {}: {err:#}", path.display());
             }
         }
+        progress.tick(&summary, Instant::now());
     }
+    progress.finish();
 
     Ok(summary)
 }
@@ -318,10 +332,42 @@ fn colorize_timestamps(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::colorize_timestamps;
+    use super::{Outcome, colorize_timestamps, report_line};
+    use std::path::Path;
 
     const GRAY: &str = "\x1b[38;5;240m";
     const RESET: &str = "\x1b[0m";
+
+    #[test]
+    fn report_lines_align_the_path_after_a_padded_label() {
+        let path = Path::new("a/b.flac");
+        assert_eq!(report_line(Outcome::Fetched, path), "fetched   a/b.flac");
+        assert_eq!(report_line(Outcome::NoChange, path), "no-change a/b.flac");
+        assert_eq!(
+            report_line(Outcome::Instrumental, path),
+            "instrumental a/b.flac"
+        );
+    }
+
+    #[test]
+    fn only_outcomes_that_wrote_something_print_at_default_verbosity() {
+        for outcome in [
+            Outcome::Fetched,
+            Outcome::Upgraded,
+            Outcome::Plain,
+            Outcome::Instrumental,
+        ] {
+            assert_eq!(outcome.verbosity(), 0, "{outcome:?}");
+        }
+        for outcome in [
+            Outcome::Skipped,
+            Outcome::Missing,
+            Outcome::Untagged,
+            Outcome::NoChange,
+        ] {
+            assert_eq!(outcome.verbosity(), 1, "{outcome:?}");
+        }
+    }
 
     #[test]
     fn colorize_inserts_a_space_between_timestamp_and_lyric() {
