@@ -176,7 +176,14 @@ Two read-only commands make no network requests and never write anything:
 - **`lyrics stats <dir>`** surveys a directory tree's coverage — how many tracks are synced,
   plain, or missing, broken down by format, plus a count of orphaned sidecars (a `.lrc`/`.txt`
   left behind after its audio file was renamed or deleted). Pass `-v` to list the orphan
-  paths. A fast way to check whether a `scan` is even worth running.
+  paths. A fast way to check whether a `scan` is even worth running. `--missing` (or
+  `--plain`) prints nothing but the paths of the tracks with no lyrics (or plain-only
+  lyrics), one per line, ready to pipe:
+
+  ```sh
+  lyrics stats ~/Music --missing | while read -r f; do lyrics track "$f" --path-fallback; done
+  ```
+
 - **`lyrics lint <path>...`** checks one or more `.lrc` files (or directories, searched
   recursively) for format and sync problems: malformed timestamps, out-of-order or duplicate
   timestamps, non-canonical `[MM:SS.xx]` formatting, and unknown metadata tags. Useful after
