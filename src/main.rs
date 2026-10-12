@@ -357,6 +357,7 @@ fn run_tui(args: &TuiArgs) -> Result<bool> {
         Song {
             title: track,
             artist: Some(artist),
+            group: None,
             lines: synced.lines,
         }
     };

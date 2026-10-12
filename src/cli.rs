@@ -147,7 +147,7 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["track", "artist", "album"], help = "Read lyrics from a local .lrc (or .txt-in-LRC-syntax) file instead of fetching them. Stays offline: no provider is queried")]
         file: Option<PathBuf>,
 
-        #[arg(long, conflicts_with_all = ["track", "artist", "album", "file"], help = "Browse the .lrc files in a directory (top level only) and pick one to follow. Stays offline: no provider is queried")]
+        #[arg(long, conflicts_with_all = ["track", "artist", "album", "file"], help = "Browse the .lrc files under a directory (recursively) and pick one to follow; press / in the list to filter it. Stays offline: no provider is queried")]
         folder: Option<PathBuf>,
 
         #[arg(

@@ -29,18 +29,20 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Leaving",
+        &[
+            ("? Esc q", "Esc or q closes this window"),
+            ("Ctrl-c", "quit"),
+        ],
+    ),
+    (
         "Library",
         &[
             ("Tab", "open · close the list"),
             ("Up k Down j", "move the cursor"),
             ("Enter", "follow this song"),
-        ],
-    ),
-    (
-        "Leaving",
-        &[
-            ("? Esc q", "Esc or q closes this window"),
-            ("Ctrl-c", "quit"),
+            ("/", "filter the list by typing"),
+            ("Backspace", "erase · Esc clears it"),
         ],
     ),
     (
@@ -142,12 +144,19 @@ mod tests {
 
     #[test]
     fn every_key_it_advertises_is_actually_bound() {
-        for (_, keys) in SECTIONS {
+        for (heading, keys) in SECTIONS {
+            let modes: &[Mode] = if *heading == "Library" {
+                &[Mode::Picker, Mode::Filter]
+            } else {
+                &[Mode::Playing]
+            };
             for (keys, _) in *keys {
                 for token in keys.split(' ') {
                     let event = to_event(token);
                     assert!(
-                        input::action(&event, Mode::Playing).is_some(),
+                        modes
+                            .iter()
+                            .any(|mode| input::action(&event, *mode).is_some()),
                         "{token} in the help table does not resolve"
                     );
                 }
@@ -158,6 +167,7 @@ mod tests {
     fn to_event(token: &str) -> KeyEvent {
         match token {
             "Space" => KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+            "Backspace" => KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
             "Esc" => KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
             "Tab" => KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             "Enter" => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),

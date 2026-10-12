@@ -24,6 +24,10 @@ pub enum Action {
     PickerDown,
     PickerSelect,
     TogglePicker,
+    StartFilter,
+    PickerType(char),
+    PickerErase,
+    PickerClearFilter,
     Quit,
 }
 
@@ -36,12 +40,35 @@ pub fn action(key: &KeyEvent, mode: Mode) -> Option<Action> {
         };
     }
 
+    if mode == Mode::Filter {
+        return match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Action::Quit)
+            }
+            KeyCode::Up => Some(Action::PickerUp),
+            KeyCode::Down => Some(Action::PickerDown),
+            KeyCode::Enter => Some(Action::PickerSelect),
+            KeyCode::Tab => Some(Action::TogglePicker),
+            KeyCode::Esc => Some(Action::PickerClearFilter),
+            KeyCode::Backspace => Some(Action::PickerErase),
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(Action::PickerType(c))
+            }
+            _ => None,
+        };
+    }
+
     if mode == Mode::Picker {
         return match key.code {
             KeyCode::Up | KeyCode::Char('k') => Some(Action::PickerUp),
             KeyCode::Down | KeyCode::Char('j') => Some(Action::PickerDown),
             KeyCode::Enter => Some(Action::PickerSelect),
             KeyCode::Tab => Some(Action::TogglePicker),
+            KeyCode::Char('/') => Some(Action::StartFilter),
             KeyCode::Char('?') => Some(Action::ToggleHelp),
             KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -295,6 +322,50 @@ mod tests {
             action(&ctrl(KeyCode::Char('c')), Mode::Picker),
             Some(Action::Quit)
         );
+    }
+
+    #[test]
+    fn slash_starts_a_filter_from_the_list_and_typing_feeds_it() {
+        assert_eq!(
+            action(&key(KeyCode::Char('/')), Mode::Picker),
+            Some(Action::StartFilter)
+        );
+        assert_eq!(action(&key(KeyCode::Char('/')), Mode::Playing), None);
+
+        assert_eq!(
+            action(&key(KeyCode::Char('q')), Mode::Filter),
+            Some(Action::PickerType('q')),
+            "q is text while filtering, not quit"
+        );
+        assert_eq!(
+            action(&shift(KeyCode::Char('Q')), Mode::Filter),
+            Some(Action::PickerType('Q'))
+        );
+        assert_eq!(
+            action(&key(KeyCode::Backspace), Mode::Filter),
+            Some(Action::PickerErase)
+        );
+        assert_eq!(
+            action(&key(KeyCode::Esc), Mode::Filter),
+            Some(Action::PickerClearFilter)
+        );
+        assert_eq!(
+            action(&key(KeyCode::Enter), Mode::Filter),
+            Some(Action::PickerSelect)
+        );
+        assert_eq!(
+            action(&key(KeyCode::Down), Mode::Filter),
+            Some(Action::PickerDown)
+        );
+        assert_eq!(
+            action(&key(KeyCode::Tab), Mode::Filter),
+            Some(Action::TogglePicker)
+        );
+        assert_eq!(
+            action(&ctrl(KeyCode::Char('c')), Mode::Filter),
+            Some(Action::Quit)
+        );
+        assert_eq!(action(&ctrl(KeyCode::Char('x')), Mode::Filter), None);
     }
 
     #[test]

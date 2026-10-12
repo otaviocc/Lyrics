@@ -23,6 +23,7 @@ const NOTICE_TTL: Duration = Duration::from_secs(2);
 pub struct Song {
     pub title: String,
     pub artist: Option<String>,
+    pub group: Option<String>,
     pub lines: Vec<SyncedLine>,
 }
 
@@ -32,6 +33,14 @@ pub enum Mode {
     Playing,
     Help,
     Picker,
+    Filter,
+}
+
+impl Mode {
+    #[must_use]
+    pub const fn is_listing(self) -> bool {
+        matches!(self, Self::Picker | Self::Filter)
+    }
 }
 
 pub struct App {
@@ -83,9 +92,8 @@ impl App {
     #[must_use]
     pub const fn browsing(&self) -> Option<&Picker> {
         let listing = match self.mode {
-            Mode::Picker => true,
-            Mode::Help => matches!(self.help_return, Mode::Picker),
-            _ => false,
+            Mode::Help => self.help_return.is_listing(),
+            mode => mode.is_listing(),
         };
         if listing { self.picker.as_ref() } else { None }
     }
@@ -195,11 +203,31 @@ impl App {
         self.mode = self.opening;
     }
 
+    fn filter_action(&mut self, action: Action) {
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
+        match action {
+            Action::StartFilter => self.mode = Mode::Filter,
+            Action::PickerType(c) => picker.type_char(c),
+            Action::PickerErase => {
+                if !picker.erase() {
+                    self.mode = Mode::Picker;
+                }
+            }
+            Action::PickerClearFilter => {
+                picker.clear_filter();
+                self.mode = Mode::Picker;
+            }
+            _ => {}
+        }
+    }
+
     fn toggle_picker(&mut self) {
         let Some(picker) = self.picker.as_mut() else {
             return;
         };
-        if self.mode != Mode::Picker {
+        if !self.mode.is_listing() {
             picker.rewind();
             self.mode = Mode::Picker;
         } else if picker.chosen().is_some() {
@@ -276,6 +304,10 @@ impl App {
             }
             Action::PickerSelect => self.play_selected(),
             Action::TogglePicker => self.toggle_picker(),
+            Action::StartFilter
+            | Action::PickerType(_)
+            | Action::PickerErase
+            | Action::PickerClearFilter => self.filter_action(action),
             Action::ToggleHelp => {
                 if self.mode == Mode::Help {
                     self.mode = self.help_return;
@@ -331,6 +363,7 @@ mod tests {
         Song {
             title: String::from("Test"),
             artist: Some(String::from("Someone")),
+            group: None,
             lines: vec![
                 SyncedLine {
                     at_ms: 1_000,
@@ -649,6 +682,7 @@ mod tests {
             Song {
                 title: String::from("One"),
                 artist: None,
+                group: None,
                 lines: vec![SyncedLine {
                     at_ms: 1_000,
                     text: String::from("a"),
@@ -657,6 +691,7 @@ mod tests {
             Song {
                 title: String::from("Two"),
                 artist: None,
+                group: None,
                 lines: vec![SyncedLine {
                     at_ms: 2_000,
                     text: String::from("b"),
@@ -836,6 +871,77 @@ mod tests {
             "browsing mid-song must not restart the countdown over a running clock"
         );
         assert!(app.clock.is_playing());
+    }
+
+    #[test]
+    fn slash_opens_the_filter_and_typing_narrows_the_list() {
+        let mut app = App::with_library(library(), Theme::default(), false).unwrap();
+
+        app.apply(Action::StartFilter, t(0));
+        assert_eq!(app.mode, Mode::Filter);
+        assert!(app.browsing().is_some(), "filtering is still browsing");
+
+        app.apply(Action::PickerType('t'), t(0));
+        app.apply(Action::PickerType('w'), t(0));
+        assert_eq!(app.browsing().map(Picker::len), Some(1));
+        assert_eq!(app.browsing().map(Picker::query), Some("tw"));
+
+        app.apply(Action::PickerSelect, t(0));
+        assert_eq!(app.mode, Mode::Playing);
+        assert_eq!(app.song.title, "Two");
+        assert_eq!(
+            app.picker().map(Picker::query),
+            Some("tw"),
+            "the filter survives the pick so the next pick starts from it"
+        );
+    }
+
+    #[test]
+    fn escape_clears_the_filter_and_backspace_on_an_empty_query_leaves_filter_mode() {
+        let mut app = App::with_library(library(), Theme::default(), false).unwrap();
+
+        app.apply(Action::StartFilter, t(0));
+        app.apply(Action::PickerType('x'), t(0));
+        assert_eq!(app.browsing().map(Picker::len), Some(0));
+
+        app.apply(Action::PickerClearFilter, t(0));
+        assert_eq!(app.mode, Mode::Picker);
+        assert_eq!(app.browsing().map(Picker::len), Some(2));
+
+        app.apply(Action::StartFilter, t(0));
+        app.apply(Action::PickerType('o'), t(0));
+        app.apply(Action::PickerErase, t(0));
+        assert_eq!(
+            app.mode,
+            Mode::Filter,
+            "erasing a character stays in the filter"
+        );
+        app.apply(Action::PickerErase, t(0));
+        assert_eq!(app.mode, Mode::Picker, "erasing past the start leaves it");
+    }
+
+    #[test]
+    fn tab_closes_the_list_from_filter_mode_too_and_help_returns_to_it() {
+        let mut app = App::with_library(library(), Theme::default(), false).unwrap();
+        app.apply(Action::PickerSelect, t(0));
+        app.apply(Action::TogglePicker, t(0));
+        app.apply(Action::StartFilter, t(0));
+
+        app.apply(Action::ToggleHelp, t(0));
+        assert!(app.browsing().is_some());
+        app.apply(Action::ToggleHelp, t(0));
+        assert_eq!(app.mode, Mode::Filter);
+
+        app.apply(Action::TogglePicker, t(0));
+        assert_eq!(app.mode, Mode::Playing);
+    }
+
+    #[test]
+    fn the_filter_keys_do_nothing_without_a_library() {
+        let mut app = App::new(song(), Theme::default(), false);
+        app.apply(Action::StartFilter, t(0));
+        app.apply(Action::PickerType('x'), t(0));
+        assert_eq!(app.mode, Mode::Playing);
     }
 
     #[test]

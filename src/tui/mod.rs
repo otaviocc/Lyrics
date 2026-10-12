@@ -28,17 +28,28 @@ const IDLE_TICK: Duration = Duration::from_millis(200);
 pub fn song_from_lrc(path: &Path) -> Result<Song> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    Ok(song_from_synced(path, lrc::parse_synced(&contents)?))
+    Ok(song_from_synced(path, lrc::parse_synced(&contents)?, None))
 }
 
 pub fn songs_from_dir(dir: &Path) -> Result<Vec<Song>> {
     Ok(lrc::synced_files(dir)?
         .into_iter()
-        .map(|(path, synced)| song_from_synced(&path, synced))
+        .map(|(path, synced)| {
+            let group = group_of(dir, &path);
+            song_from_synced(&path, synced, group)
+        })
         .collect())
 }
 
-fn song_from_synced(path: &Path, synced: lrc::Synced) -> Song {
+fn group_of(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.parent()?.strip_prefix(root).ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    Some(relative.to_string_lossy().into_owned())
+}
+
+fn song_from_synced(path: &Path, synced: lrc::Synced, group: Option<String>) -> Song {
     let lrc::Synced {
         title,
         artist,
@@ -53,6 +64,7 @@ fn song_from_synced(path: &Path, synced: lrc::Synced) -> Song {
     Song {
         title,
         artist,
+        group,
         lines,
     }
 }
@@ -166,4 +178,27 @@ fn handle(app: &mut App, wake: &Wake) -> Result<()> {
         Wake::InputLost => anyhow::bail!("cannot read keyboard input"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_nested_lrc_is_grouped_by_its_directory_relative_to_the_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let album = root.join("Metallica").join("Ride the Lightning");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(root.join("01 Top.lrc"), "[00:01.00]a\n").unwrap();
+        fs::write(album.join("05 Fade to Black.lrc"), "[00:01.00]b\n").unwrap();
+
+        let songs = songs_from_dir(root).unwrap();
+        assert_eq!(songs.len(), 2);
+        assert_eq!(songs.first().unwrap().group, None);
+        assert_eq!(
+            songs.get(1).unwrap().group.as_deref(),
+            Some("Metallica/Ride the Lightning")
+        );
+    }
 }
