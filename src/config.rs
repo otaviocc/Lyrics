@@ -36,6 +36,7 @@ pub struct Options {
     pub delay_ms: Option<u64>,
     pub max_retries: Option<u32>,
     pub duration_tolerance: Option<u32>,
+    pub retry_missing_after: Option<u32>,
     pub user_agent: Option<String>,
     pub path_fallback: Option<bool>,
     pub keep_plain: Option<bool>,

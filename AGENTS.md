@@ -48,6 +48,11 @@ src/
                 sidecar_state (Synced/Plain/None, used by scan) is a lossy view over the
                 finer-grained sidecar_detail (splits out the instrumental marker, used by
                 stats) - widening SidecarState itself would change scan/--force semantics
+  missing.rs  : the miss cache (~/.cache/lyrics/missing.json): which tracks a provider had
+                nothing for, keyed by path + mtime, so scan defers them for a while; the one
+                file written outside sidecar.rs, and never an audio path
+  progress.rs : the one-line stderr counter scan draws at default verbosity; cleared before
+                every stdout line so nothing is left in scrollback
   runner.rs   : per-track decision logic (process_track), the scan walk, and
                 walk_audio_files (shared by scan and stats)
   stats.rs    : read-only coverage census (`lyrics stats`); never constructs an http::Client
