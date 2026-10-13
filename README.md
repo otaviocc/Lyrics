@@ -40,8 +40,11 @@ Requires [Rust](https://rustup.rs) to build. `make uninstall` removes it.
 
 ### Shell completions
 
-`lyrics completions <shell>` prints a completion script for `bash`, `zsh`, `fish`, `elvish`,
-or `powershell`. Put it where your shell looks:
+`make install` also drops a completion script into place for each of zsh, bash, and fish that
+it finds on the machine (`make completions` does just that part; `make uninstall` removes
+them). The zsh one lands in `~/.zfunc`, which needs `fpath+=~/.zfunc` before `compinit` in
+your `~/.zshrc`. Installed another way, or want another shell? `lyrics completions <shell>`
+prints the script for `bash`, `zsh`, `fish`, `elvish`, or `powershell`:
 
 ```sh
 lyrics completions zsh > ~/.zfunc/_lyrics          # then: fpath+=~/.zfunc; autoload -Uz compinit
