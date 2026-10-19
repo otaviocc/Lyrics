@@ -15,5 +15,6 @@ pub mod provider;
 pub mod runner;
 pub mod sidecar;
 pub mod stats;
+pub mod status;
 pub mod theme;
 pub mod tui;

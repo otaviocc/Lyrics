@@ -17,6 +17,7 @@ use crate::meta::{self, ResolvedMeta, TrackMeta};
 use crate::missing::MissingCache;
 use crate::progress::Progress;
 use crate::sidecar::{self, SidecarState};
+use crate::status::{self, Tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -57,12 +58,37 @@ impl Outcome {
 }
 
 #[must_use]
-pub fn report_line(outcome: Outcome, path: &Path) -> String {
-    format!("{:<9} {}", outcome.label(), path.display())
+pub fn report_line(outcome: Outcome, path: &Path, color: bool) -> String {
+    status::line(
+        outcome.label(),
+        &path.display().to_string(),
+        Tone::Outcome,
+        color,
+    )
 }
 
 pub fn report(outcome: Outcome, path: &Path, opts: &Options) {
-    log(opts, outcome.verbosity(), report_line(outcome, path));
+    log(
+        opts,
+        outcome.verbosity(),
+        report_line(
+            outcome,
+            path,
+            status::color_for(opts.no_color, &std::io::stdout()),
+        ),
+    );
+}
+
+pub fn report_error(path: &Path, err: &anyhow::Error, opts: &Options) {
+    eprintln!(
+        "{}",
+        status::line(
+            "error",
+            &format!("{}: {err:#}", path.display()),
+            Tone::Error,
+            status::color_for(opts.no_color, &std::io::stderr()),
+        )
+    );
 }
 
 #[derive(Debug, Default)]
@@ -266,7 +292,7 @@ pub fn scan(client: &mut Client, dir: &Path, opts: &Options) -> Result<Summary> 
             Err(err) => {
                 summary.errors = summary.errors.saturating_add(1);
                 progress.clear();
-                eprintln!("error     {}: {err:#}", path.display());
+                report_error(&path, &err, opts);
             }
         }
         progress.tick(&summary, Instant::now());
@@ -302,7 +328,7 @@ pub fn lookup_lyrics(
 }
 
 pub fn print_lyrics(text: &str, color: bool) -> Result<()> {
-    let use_color = color && std::env::var_os("NO_COLOR").is_none();
+    let use_color = color && status::color_allowed();
 
     let output;
     let rendered = if use_color {
@@ -333,7 +359,6 @@ pub fn print_lyrics(text: &str, color: bool) -> Result<()> {
 #[allow(clippy::string_slice)]
 fn colorize_timestamps(text: &str) -> String {
     const GRAY: &str = "\x1b[38;5;240m";
-    const RESET: &str = "\x1b[0m";
 
     let mut out = String::with_capacity(text.len().saturating_add(text.len() / 4));
     for line in text.lines() {
@@ -346,7 +371,7 @@ fn colorize_timestamps(text: &str) -> String {
             out.push_str(&line[..prefix_len]);
             out.push_str(GRAY);
             out.push_str(&trimmed[..=close]);
-            out.push_str(RESET);
+            out.push_str(status::RESET);
             if !lyric.is_empty() {
                 out.push(' ');
             }
@@ -363,18 +388,24 @@ fn colorize_timestamps(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Outcome, colorize_timestamps, report_line};
+    use crate::status::RESET;
     use std::path::Path;
 
     const GRAY: &str = "\x1b[38;5;240m";
-    const RESET: &str = "\x1b[0m";
 
     #[test]
-    fn report_lines_align_the_path_after_a_padded_label() {
+    fn report_lines_right_align_the_label_before_the_path() {
         let path = Path::new("a/b.flac");
-        assert_eq!(report_line(Outcome::Fetched, path), "fetched   a/b.flac");
-        assert_eq!(report_line(Outcome::NoChange, path), "no-change a/b.flac");
         assert_eq!(
-            report_line(Outcome::Instrumental, path),
+            report_line(Outcome::Fetched, path, false),
+            "     fetched a/b.flac"
+        );
+        assert_eq!(
+            report_line(Outcome::NoChange, path, false),
+            "   no-change a/b.flac"
+        );
+        assert_eq!(
+            report_line(Outcome::Instrumental, path, false),
             "instrumental a/b.flac"
         );
     }

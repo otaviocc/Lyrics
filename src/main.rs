@@ -16,6 +16,7 @@ use lyrics::ebook::{self, BookOptions};
 use lyrics::http::{Client, ClientConfig, LyricsRecord};
 use lyrics::lrc::{self, Severity};
 use lyrics::missing::MissingCache;
+use lyrics::status::{self, Tone};
 use lyrics::theme;
 use lyrics::tui::{self, app::Song};
 use lyrics::{runner, stats};
@@ -48,10 +49,12 @@ fn load_config(raw: &SharedOptions) -> Result<Config> {
             }
             config::load(path)
         }
-        None => {
-            config::default_path().map_or_else(|| Ok(Config::default()), |path| config::load(&path))
-        }
+        None => default_config(),
     }
+}
+
+fn default_config() -> Result<Config> {
+    config::default_path().map_or_else(|| Ok(Config::default()), |path| config::load(&path))
 }
 
 fn client_for(opts: &Options) -> Client {
@@ -74,10 +77,28 @@ fn fetch_lyrics(
     runner::lookup_lyrics(&mut client, track, artist, album, options)
 }
 
-fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
+fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool, no_color: bool) -> Result<bool> {
+    let no_color = no_color || default_config()?.options.no_color.unwrap_or(false);
+    Ok(lint_files(
+        paths,
+        strict,
+        quiet,
+        status::color_for(no_color, &std::io::stderr()),
+    ))
+}
+
+fn lint_files(paths: &[PathBuf], strict: bool, quiet: bool, color: bool) -> bool {
     let (files, skipped) = lrc::resolve_lrc_paths(paths);
     for path in &skipped {
-        eprintln!("skip      {}: not an LRC file", path.display());
+        eprintln!(
+            "{}",
+            status::line(
+                "skip",
+                &format!("{}: not an LRC file", path.display()),
+                Tone::Outcome,
+                color,
+            )
+        );
     }
 
     let mut files_checked: u32 = 0;
@@ -88,7 +109,15 @@ fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool) -> bool {
         let contents = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(err) => {
-                eprintln!("error     {}: {err}", path.display());
+                eprintln!(
+                    "{}",
+                    status::line(
+                        "error",
+                        &format!("{}: {err}", path.display()),
+                        Tone::Error,
+                        color,
+                    )
+                );
                 total_errors = total_errors.saturating_add(1);
                 continue;
             }
@@ -212,7 +241,14 @@ fn run(cli: Cli) -> Result<bool> {
                 cache.save()?;
             }
             if !options.quiet {
-                println!("{}", runner::report_line(outcome, &file));
+                println!(
+                    "{}",
+                    runner::report_line(
+                        outcome,
+                        &file,
+                        status::color_for(options.no_color, &std::io::stdout()),
+                    )
+                );
             }
             Ok(true)
         }
@@ -256,7 +292,8 @@ fn run(cli: Cli) -> Result<bool> {
             paths,
             strict,
             quiet,
-        } => Ok(run_lint(&paths, strict, quiet)),
+            no_color,
+        } => run_lint(&paths, strict, quiet, no_color),
         Command::Ebook {
             dir,
             output,

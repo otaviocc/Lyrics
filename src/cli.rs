@@ -77,6 +77,9 @@ pub enum Command {
 
         #[arg(short, long, help = "Print only the final summary line")]
         quiet: bool,
+
+        #[arg(long, help = "Disable colored skip/error labels")]
+        no_color: bool,
     },
     #[command(
         about = "Build an EPUB of your library's lyrics. Read-only: makes no network requests"
@@ -237,7 +240,7 @@ pub struct SharedOptions {
 
     #[arg(
         long,
-        help = "Disable colored output in `show` (timestamps are dimmed by default)"
+        help = "Disable colored output (status labels, and `show`'s dimmed timestamps)"
     )]
     pub no_color: bool,
 

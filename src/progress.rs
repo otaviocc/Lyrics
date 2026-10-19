@@ -6,15 +6,26 @@
 use std::io::{IsTerminal as _, Write as _};
 use std::time::{Duration, Instant};
 
+use unicode_width::UnicodeWidthStr as _;
+
 use crate::cli::Options;
 use crate::runner::Summary;
+use crate::status::{self, LABEL_WIDTH, Tone};
 
 const REDRAW_EVERY: Duration = Duration::from_millis(100);
 const CLEAR_LINE: &str = "\r\x1b[K";
+const HEADER: &str = "Scanning";
+const FALLBACK_COLUMNS: usize = 80;
+const MIN_BAR: usize = 10;
+const MAX_BAR: usize = 40;
+const BAR_CHROME: usize = "[] ".len();
+const SPARE_COLUMN: usize = 1;
+const SEPARATOR: &str = " · ";
 
 #[derive(Debug)]
 pub struct Progress {
     enabled: bool,
+    color: bool,
     total: usize,
     done: usize,
     showing: bool,
@@ -26,13 +37,17 @@ impl Progress {
     pub fn for_scan(opts: &Options, total: usize) -> Self {
         let enabled =
             !opts.quiet && opts.verbose == 0 && total > 0 && std::io::stderr().is_terminal();
-        Self::new(total, enabled)
+        Self {
+            color: status::color_for(opts.no_color, &std::io::stderr()),
+            ..Self::new(total, enabled)
+        }
     }
 
     #[must_use]
     pub const fn new(total: usize, enabled: bool) -> Self {
         Self {
             enabled,
+            color: false,
             total,
             done: 0,
             showing: false,
@@ -64,8 +79,11 @@ impl Progress {
     }
 
     fn draw(&mut self, summary: &Summary, now: Instant) {
+        let columns = ratatui::crossterm::terminal::size()
+            .map_or(FALLBACK_COLUMNS, |(cols, _)| usize::from(cols));
+        let text = line(self.done, self.total, summary, columns, self.color);
         let mut err = std::io::stderr().lock();
-        let _ = write!(err, "{CLEAR_LINE}{}", line(self.done, self.total, summary));
+        let _ = write!(err, "{CLEAR_LINE}{text}");
         let _ = err.flush();
         self.showing = true;
         self.last_draw = Some(now);
@@ -87,12 +105,61 @@ impl Progress {
 }
 
 #[must_use]
-pub fn line(done: usize, total: usize, summary: &Summary) -> String {
+pub fn line(done: usize, total: usize, summary: &Summary, columns: usize, color: bool) -> String {
+    let room = columns.saturating_sub(LABEL_WIDTH.saturating_add(1).saturating_add(SPARE_COLUMN));
+    if room == 0 {
+        return String::new();
+    }
+    let counts = counts(done, total, summary);
+    let width = columns
+        .saturating_sub(status::line(HEADER, &counts, Tone::Progress, false).width())
+        .saturating_sub(BAR_CHROME)
+        .saturating_sub(SPARE_COLUMN)
+        .min(MAX_BAR);
+    let rest = if width < MIN_BAR {
+        fit(&counts, room)
+    } else {
+        format!("{} {counts}", bar(done, total, width))
+    };
+    status::line(HEADER, &rest, Tone::Progress, color)
+}
+
+fn fit(text: &str, max: usize) -> String {
+    let mut kept = String::new();
+    for segment in text.split(SEPARATOR) {
+        let candidate = if kept.is_empty() {
+            segment.to_owned()
+        } else {
+            format!("{kept}{SEPARATOR}{segment}")
+        };
+        if candidate.width() > max {
+            break;
+        }
+        kept = candidate;
+    }
+    kept
+}
+
+fn counts(done: usize, total: usize, summary: &Summary) -> String {
     let fetched = summary.synced.saturating_add(summary.upgraded);
     format!(
-        "{done}/{total} · fetched {fetched} · plain {} · missing {}",
+        "{done}/{total}: fetched {fetched}{SEPARATOR}plain {}{SEPARATOR}missing {}",
         summary.plain, summary.missing
     )
+}
+
+fn bar(done: usize, total: usize, width: usize) -> String {
+    let filled = done
+        .min(total)
+        .saturating_mul(width)
+        .checked_div(total)
+        .unwrap_or(width);
+    let body = if filled == 0 || filled == width {
+        "=".repeat(filled)
+    } else {
+        format!("{}>", "=".repeat(filled.saturating_sub(1)))
+    };
+    format!("[{body:<width$}]")
 }
 
 #[cfg(test)]
@@ -109,9 +176,80 @@ mod tests {
             ..Summary::default()
         };
         assert_eq!(
-            line(7, 100, &summary),
-            "7/100 · fetched 5 · plain 1 · missing 4"
+            counts(7, 100, &summary),
+            "7/100: fetched 5 · plain 1 · missing 4"
         );
+    }
+
+    #[test]
+    fn the_bar_is_empty_at_the_start() {
+        assert_eq!(bar(0, 10, 10), "[          ]");
+    }
+
+    #[test]
+    fn the_bar_tips_its_fill_with_an_arrow() {
+        assert_eq!(bar(5, 10, 10), "[====>     ]");
+    }
+
+    #[test]
+    fn the_bar_is_solid_when_done() {
+        assert_eq!(bar(10, 10, 10), "[==========]");
+        assert_eq!(bar(12, 10, 10), "[==========]");
+        assert_eq!(bar(0, 0, 10), "[==========]");
+    }
+
+    #[test]
+    fn the_bar_survives_a_huge_count() {
+        assert_eq!(bar(usize::MAX - 1, usize::MAX, 10).width(), 12);
+    }
+
+    #[test]
+    fn the_line_leaves_the_last_column_free() {
+        let summary = Summary::default();
+        for columns in [70, 80, 120, 200] {
+            let text = line(42, 120, &summary, columns, false);
+            assert!(text.width() < columns, "{columns}: {text}");
+            assert!(text.contains('['), "{columns}: {text}");
+        }
+    }
+
+    #[test]
+    fn the_bar_is_capped_on_a_wide_terminal() {
+        let text = line(42, 120, &Summary::default(), 500, false);
+        assert!(text.contains(&bar(42, 120, MAX_BAR)), "{text}");
+    }
+
+    #[test]
+    fn a_narrow_terminal_drops_the_bar() {
+        assert_eq!(
+            line(42, 120, &Summary::default(), 60, false),
+            "    Scanning 42/120: fetched 0 · plain 0 · missing 0"
+        );
+    }
+
+    #[test]
+    fn a_very_narrow_terminal_cuts_the_counts_short_rather_than_wrapping() {
+        let text = line(42, 120, &Summary::default(), 40, false);
+        assert_eq!(text, "    Scanning 42/120: fetched 0");
+        assert!(text.width() < 40);
+    }
+
+    #[test]
+    fn cutting_the_counts_never_truncates_a_number() {
+        let summary = Summary {
+            synced: 123,
+            ..Summary::default()
+        };
+        assert_eq!(
+            line(42, 120, &summary, 34, false),
+            "    Scanning 42/120: fetched 123"
+        );
+        assert_eq!(line(42, 120, &summary, 32, false), "    Scanning ");
+    }
+
+    #[test]
+    fn a_terminal_too_narrow_for_the_label_draws_nothing() {
+        assert_eq!(line(42, 120, &Summary::default(), 14, false), "");
     }
 
     #[test]

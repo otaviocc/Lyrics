@@ -53,6 +53,9 @@ src/
                 file written outside sidecar.rs, and never an audio path
   progress.rs : the one-line stderr counter scan draws at default verbosity; cleared before
                 every stdout line so nothing is left in scrollback
+  status.rs   : cargo-style status lines (right-aligned colored label, then the rest) shared
+                by scan/track outcome lines, scan and lint skip/error lines, and the progress
+                bar header; color only on a terminal, and never with NO_COLOR or --no-color
   runner.rs   : per-track decision logic (process_track), the scan walk, and
                 walk_audio_files (shared by scan and stats)
   stats.rs    : read-only coverage census (`lyrics stats`); never constructs an http::Client
