@@ -136,7 +136,7 @@ mod tests {
 
         let mut archive = ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
         let first = archive.by_index(0).unwrap();
-        assert_eq!(first.name(), "mimetype");
+        assert_eq!(first.name().unwrap(), "mimetype");
         assert_eq!(first.compression(), CompressionMethod::Stored);
         drop(first);
 
@@ -154,7 +154,10 @@ mod tests {
         write(&path, &rendered).unwrap();
 
         let archive = ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
-        let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        let names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
 
         for required in [
             "mimetype",
