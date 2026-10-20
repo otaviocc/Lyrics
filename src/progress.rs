@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr as _;
 
 use crate::cli::Options;
 use crate::runner::Summary;
-use crate::status::{self, LABEL_WIDTH, Tone};
+use crate::status::{self, LABEL_WIDTH, Paint, Tone};
 
 const REDRAW_EVERY: Duration = Duration::from_millis(100);
 const CLEAR_LINE: &str = "\r\x1b[K";
@@ -25,7 +25,7 @@ const SEPARATOR: &str = " · ";
 #[derive(Debug)]
 pub struct Progress {
     enabled: bool,
-    color: bool,
+    paint: Option<Paint>,
     total: usize,
     done: usize,
     showing: bool,
@@ -38,7 +38,7 @@ impl Progress {
         let enabled =
             !opts.quiet && opts.verbose == 0 && total > 0 && std::io::stderr().is_terminal();
         Self {
-            color: status::color_for(opts.no_color, &std::io::stderr()),
+            paint: status::paint_for(&opts.paint, opts.no_color, &std::io::stderr()).cloned(),
             ..Self::new(total, enabled)
         }
     }
@@ -47,7 +47,7 @@ impl Progress {
     pub const fn new(total: usize, enabled: bool) -> Self {
         Self {
             enabled,
-            color: false,
+            paint: None,
             total,
             done: 0,
             showing: false,
@@ -81,7 +81,7 @@ impl Progress {
     fn draw(&mut self, summary: &Summary, now: Instant) {
         let columns = ratatui::crossterm::terminal::size()
             .map_or(FALLBACK_COLUMNS, |(cols, _)| usize::from(cols));
-        let text = line(self.done, self.total, summary, columns, self.color);
+        let text = line(self.done, self.total, summary, columns, self.paint.as_ref());
         let mut err = std::io::stderr().lock();
         let _ = write!(err, "{CLEAR_LINE}{text}");
         let _ = err.flush();
@@ -105,14 +105,20 @@ impl Progress {
 }
 
 #[must_use]
-pub fn line(done: usize, total: usize, summary: &Summary, columns: usize, color: bool) -> String {
+pub fn line(
+    done: usize,
+    total: usize,
+    summary: &Summary,
+    columns: usize,
+    paint: Option<&Paint>,
+) -> String {
     let room = columns.saturating_sub(LABEL_WIDTH.saturating_add(1).saturating_add(SPARE_COLUMN));
     if room == 0 {
         return String::new();
     }
     let counts = counts(done, total, summary);
     let width = columns
-        .saturating_sub(status::line(HEADER, &counts, Tone::Progress, false).width())
+        .saturating_sub(status::line(HEADER, &counts, Tone::Progress, None).width())
         .saturating_sub(BAR_CHROME)
         .saturating_sub(SPARE_COLUMN)
         .min(MAX_BAR);
@@ -121,7 +127,7 @@ pub fn line(done: usize, total: usize, summary: &Summary, columns: usize, color:
     } else {
         format!("{} {counts}", bar(done, total, width))
     };
-    status::line(HEADER, &rest, Tone::Progress, color)
+    status::line(HEADER, &rest, Tone::Progress, paint)
 }
 
 fn fit(text: &str, max: usize) -> String {
@@ -207,7 +213,7 @@ mod tests {
     fn the_line_leaves_the_last_column_free() {
         let summary = Summary::default();
         for columns in [70, 80, 120, 200] {
-            let text = line(42, 120, &summary, columns, false);
+            let text = line(42, 120, &summary, columns, None);
             assert!(text.width() < columns, "{columns}: {text}");
             assert!(text.contains('['), "{columns}: {text}");
         }
@@ -215,21 +221,21 @@ mod tests {
 
     #[test]
     fn the_bar_is_capped_on_a_wide_terminal() {
-        let text = line(42, 120, &Summary::default(), 500, false);
+        let text = line(42, 120, &Summary::default(), 500, None);
         assert!(text.contains(&bar(42, 120, MAX_BAR)), "{text}");
     }
 
     #[test]
     fn a_narrow_terminal_drops_the_bar() {
         assert_eq!(
-            line(42, 120, &Summary::default(), 60, false),
+            line(42, 120, &Summary::default(), 60, None),
             "    Scanning 42/120: fetched 0 · plain 0 · missing 0"
         );
     }
 
     #[test]
     fn a_very_narrow_terminal_cuts_the_counts_short_rather_than_wrapping() {
-        let text = line(42, 120, &Summary::default(), 40, false);
+        let text = line(42, 120, &Summary::default(), 40, None);
         assert_eq!(text, "    Scanning 42/120: fetched 0");
         assert!(text.width() < 40);
     }
@@ -241,15 +247,15 @@ mod tests {
             ..Summary::default()
         };
         assert_eq!(
-            line(42, 120, &summary, 34, false),
+            line(42, 120, &summary, 34, None),
             "    Scanning 42/120: fetched 123"
         );
-        assert_eq!(line(42, 120, &summary, 32, false), "    Scanning ");
+        assert_eq!(line(42, 120, &summary, 32, None), "    Scanning ");
     }
 
     #[test]
     fn a_terminal_too_narrow_for_the_label_draws_nothing() {
-        assert_eq!(line(42, 120, &Summary::default(), 14, false), "");
+        assert_eq!(line(42, 120, &Summary::default(), 14, None), "");
     }
 
     #[test]

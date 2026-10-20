@@ -16,7 +16,7 @@ use lyrics::ebook::{self, BookOptions};
 use lyrics::http::{Client, ClientConfig, LyricsRecord};
 use lyrics::lrc::{self, Severity};
 use lyrics::missing::MissingCache;
-use lyrics::status::{self, Tone};
+use lyrics::status::{self, Paint, Tone};
 use lyrics::theme;
 use lyrics::tui::{self, app::Song};
 use lyrics::{runner, stats};
@@ -35,7 +35,24 @@ fn main() -> ExitCode {
 }
 
 fn resolve_options(raw: &SharedOptions) -> Result<Options> {
-    Ok(raw.resolve(&load_config(raw)?))
+    let config = load_config(raw)?;
+    Ok(Options {
+        paint: paint_for(&config),
+        ..raw.resolve(&config)
+    })
+}
+
+fn paint_for(config: &Config) -> Paint {
+    let Some(name) = config.tui.theme.as_deref() else {
+        return Paint::default();
+    };
+    match theme::loader::load(None, Some(name), config::config_dir().as_deref()) {
+        Ok(loaded) => Paint::from_palette(&loaded.theme.palette),
+        Err(err) => {
+            eprintln!("lyrics: {err}; status labels fall back to ANSI colors");
+            Paint::default()
+        }
+    }
 }
 
 fn load_config(raw: &SharedOptions) -> Result<Config> {
@@ -78,16 +95,18 @@ fn fetch_lyrics(
 }
 
 fn run_lint(paths: &[PathBuf], strict: bool, quiet: bool, no_color: bool) -> Result<bool> {
-    let no_color = no_color || default_config()?.options.no_color.unwrap_or(false);
+    let config = default_config()?;
+    let no_color = no_color || config.options.no_color.unwrap_or(false);
+    let paint = paint_for(&config);
     Ok(lint_files(
         paths,
         strict,
         quiet,
-        status::color_for(no_color, &std::io::stderr()),
+        status::paint_for(&paint, no_color, &std::io::stderr()),
     ))
 }
 
-fn lint_files(paths: &[PathBuf], strict: bool, quiet: bool, color: bool) -> bool {
+fn lint_files(paths: &[PathBuf], strict: bool, quiet: bool, paint: Option<&Paint>) -> bool {
     let (files, skipped) = lrc::resolve_lrc_paths(paths);
     for path in &skipped {
         eprintln!(
@@ -96,7 +115,7 @@ fn lint_files(paths: &[PathBuf], strict: bool, quiet: bool, color: bool) -> bool
                 "skip",
                 &format!("{}: not an LRC file", path.display()),
                 Tone::Outcome,
-                color,
+                paint,
             )
         );
     }
@@ -115,7 +134,7 @@ fn lint_files(paths: &[PathBuf], strict: bool, quiet: bool, color: bool) -> bool
                         "error",
                         &format!("{}: {err}", path.display()),
                         Tone::Error,
-                        color,
+                        paint,
                     )
                 );
                 total_errors = total_errors.saturating_add(1);
@@ -246,7 +265,7 @@ fn run(cli: Cli) -> Result<bool> {
                     runner::report_line(
                         outcome,
                         &file,
-                        status::color_for(options.no_color, &std::io::stdout()),
+                        status::paint_for(&options.paint, options.no_color, &std::io::stdout()),
                     )
                 );
             }

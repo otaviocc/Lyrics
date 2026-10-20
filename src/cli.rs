@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::config::Config;
 use crate::provider::ProviderKind;
+use crate::status::Paint;
 
 pub const DEFAULT_DURATION_TOLERANCE: u32 = 2;
 pub const DEFAULT_DELAY_MS: u64 = 300;
@@ -316,6 +317,7 @@ impl SharedOptions {
             verbose: self.verbose,
             quiet: self.quiet,
             no_color: self.no_color || config.options.no_color.unwrap_or(false),
+            paint: Paint::default(),
             provider,
             delay_ms: self
                 .delay_ms
@@ -349,6 +351,7 @@ pub struct Options {
     pub verbose: u8,
     pub quiet: bool,
     pub no_color: bool,
+    pub paint: Paint,
     pub provider: ProviderKind,
     pub delay_ms: u64,
     pub max_retries: u32,
