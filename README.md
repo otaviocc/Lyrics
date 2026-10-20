@@ -280,7 +280,9 @@ Every value option (`provider`, `delay_ms`, `max_retries`, `duration_tolerance`,
 `no_marker_fallback`, `no_color`) under `[options]` is supported. `[lrclib]`/`[lrcmux]` accept
 a provider-specific `user_agent` that overrides `[options].user_agent` when that provider is
 selected. `[tui].theme` sets `tui`'s default theme; `--theme` on the command line overrides it
-for that run.
+for that run. When it is set, the status labels of `scan`, `track`, and `lint` take their colors
+from that theme too (`accent` for the progress bar, `warning` for outcomes, `error` for errors);
+without it, they use the terminal's own ANSI yellow, red, and cyan.
 
 `force`, `dry_run`, `verbose`, and `quiet` are **not** configurable — a config that silently
 forces every run to re-fetch, silently makes every run a no-op, or fights with itself over

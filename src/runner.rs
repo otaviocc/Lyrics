@@ -17,7 +17,7 @@ use crate::meta::{self, ResolvedMeta, TrackMeta};
 use crate::missing::MissingCache;
 use crate::progress::Progress;
 use crate::sidecar::{self, SidecarState};
-use crate::status::{self, Tone};
+use crate::status::{self, Paint, Tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -58,12 +58,12 @@ impl Outcome {
 }
 
 #[must_use]
-pub fn report_line(outcome: Outcome, path: &Path, color: bool) -> String {
+pub fn report_line(outcome: Outcome, path: &Path, paint: Option<&Paint>) -> String {
     status::line(
         outcome.label(),
         &path.display().to_string(),
         Tone::Outcome,
-        color,
+        paint,
     )
 }
 
@@ -74,7 +74,7 @@ pub fn report(outcome: Outcome, path: &Path, opts: &Options) {
         report_line(
             outcome,
             path,
-            status::color_for(opts.no_color, &std::io::stdout()),
+            status::paint_for(&opts.paint, opts.no_color, &std::io::stdout()),
         ),
     );
 }
@@ -86,7 +86,7 @@ pub fn report_error(path: &Path, err: &anyhow::Error, opts: &Options) {
             "error",
             &format!("{}: {err:#}", path.display()),
             Tone::Error,
-            status::color_for(opts.no_color, &std::io::stderr()),
+            status::paint_for(&opts.paint, opts.no_color, &std::io::stderr()),
         )
     );
 }
@@ -397,15 +397,15 @@ mod tests {
     fn report_lines_right_align_the_label_before_the_path() {
         let path = Path::new("a/b.flac");
         assert_eq!(
-            report_line(Outcome::Fetched, path, false),
+            report_line(Outcome::Fetched, path, None),
             "     fetched a/b.flac"
         );
         assert_eq!(
-            report_line(Outcome::NoChange, path, false),
+            report_line(Outcome::NoChange, path, None),
             "   no-change a/b.flac"
         );
         assert_eq!(
-            report_line(Outcome::Instrumental, path, false),
+            report_line(Outcome::Instrumental, path, None),
             "instrumental a/b.flac"
         );
     }
